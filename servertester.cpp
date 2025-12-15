@@ -179,7 +179,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         {
             QMutexLocker locker(&mutex);
             if (testOvpnConfig.isEmpty()) {
-                return qMakePair(false, "Нет конфигурации");
+                return qMakePair(false, QString("Нет конфигурации"));
             }
             configCopy = testOvpnConfig;
         }
@@ -188,7 +188,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         QString configContent = QString::fromUtf8(configData);
 
         if (!tempFile.open()) {
-            return qMakePair(false, "Не удалось создать временный файл");
+            return qMakePair(false, QString("Не удалось создать временный файл"));
         }
 
         QString enhancedConfig = enhanceConfig(configContent);
@@ -197,7 +197,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         tempFile.close();
 
         if (!authFile.open()) {
-            return qMakePair(false, "Не удалось создать файл аутентификации");
+            return qMakePair(false, QString("Не удалось создать файл аутентификации"));
         }
 
         QTextStream authStream(&authFile);
@@ -207,7 +207,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         QString openvpnPath = findOpenvpn();
         QFileInfo openvpnInfo(openvpnPath);
         if (!openvpnInfo.exists() || !openvpnInfo.isExecutable()) {
-            return qMakePair(false, "OpenVPN не найден");
+            return qMakePair(false, QString("OpenVPN не найден"));
         }
 
         QStringList cmd = {
@@ -260,41 +260,40 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         connectTime = elapsedTimer.elapsed();
 
         QString output;
-        if (localProcess) {
-            output = QString::fromUtf8(localProcess->readAll());
-        }
-
         bool processWasRunning = false;
         {
             QMutexLocker locker(&mutex);
             processWasRunning = (process == localProcess);
+            if (processWasRunning && localProcess) {
+                output = QString::fromUtf8(localProcess->readAll());
+            }
         }
 
         if (!processWasRunning) {
-            return qMakePair(false, "Процесс был прерван");
+            return qMakePair(false, QString("Процесс был прерван"));
         }
 
-        if (localProcess->exitStatus() == QProcess::NormalExit) {
+        if (processWasRunning && localProcess->exitStatus() == QProcess::NormalExit) {
             if (localProcess->exitCode() == 0) {
                 // ОСНОВНОЕ ИСПРАВЛЕНИЕ: Проверяем, действительно ли установился туннель
                 if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
                     return qMakePair(true, QString("Реальное подключение за %1ms").arg(connectTime));
                 } else {
                     // OpenVPN завершился с кодом 0, но туннель не установился
-                    return qMakePair(false, "Нет подтверждения подключения");
+                    return qMakePair(false, QString("Нет подтверждения подключения"));
                 }
             } else {
                 if (output.contains("AUTH_FAILED", Qt::CaseInsensitive) ||
                     output.contains("TLS Error", Qt::CaseInsensitive) ||
                     output.contains("connection timeout", Qt::CaseInsensitive) ||
                     output.contains("connection refused", Qt::CaseInsensitive)) {
-                    return qMakePair(false, "Ошибка подключения");
+                    return qMakePair(false, QString("Ошибка подключения"));
                     }
                     return qMakePair(false, QString("Ошибка (код: %1)").arg(localProcess->exitCode()));
             }
         } else {
             // Таймаут или ошибка
-            if (localProcess->state() == QProcess::Running) {
+            if (processWasRunning && localProcess->state() == QProcess::Running) {
                 localProcess->terminate();
                 if (!localProcess->waitForFinished(1000)) {
                     localProcess->kill();

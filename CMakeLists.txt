@@ -8,7 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Укажите явно компоненты Qt
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent)
+find_package(Qt5 REQUIRED COMPONENTS Core Widgets Network Concurrent)
 
 set(SOURCES
     main.cpp
@@ -34,10 +34,10 @@ add_executable(VPNGateManager ${SOURCES} ${HEADERS} ${FORMS})
 
 # Укажите публичные зависимости
 target_link_libraries(VPNGateManager PUBLIC
-    Qt6::Core
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::Concurrent
+    Qt5::Core
+    Qt5::Widgets
+    Qt5::Network
+    Qt5::Concurrent
 )
 
 # Добавьте определения
