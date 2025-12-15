@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+    <class>MainWindow</class>
+    <widget class="QMainWindow" name="MainWindow">
+        <property name="geometry">
+            <rect>
+                <x>0</x>
+                <y>0</y>
+                <width>500</width>
+                <height>900</height>
+            </rect>
+        </property>
+        <property name="windowTitle">
+            <string>VPNGate Manager</string>
+        </property>
+        <widget class="QWidget" name="centralwidget">
+            <layout class="QVBoxLayout" name="verticalLayout">
+                <item>
+                    <widget class="QLabel" name="titleLabel">
+                        <property name="text">
+                            <string>VPNGate Manager - Проверка ВСЕХ серверов</string>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <layout class="QHBoxLayout" name="buttonLayout">
+                        <item>
+                            <widget class="QPushButton" name="refreshButton">
+                                <property name="text">
+                                    <string>🔄 Загрузить и проверить ВСЕ</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QPushButton" name="stopTestButton">
+                                <property name="text">
+                                    <string>⏹️ Остановить проверку</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QPushButton" name="testSelectedButton">
+                                <property name="text">
+                                    <string>🔍 Проверить снова</string>
+                                </property>
+                            </widget>
+                        </item>
+                    </layout>
+                </item>
+                <item>
+                    <layout class="QHBoxLayout" name="testProgressLayout">
+                        <item>
+                            <widget class="QLabel" name="label">
+                                <property name="text">
+                                    <string>Прогресс:</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QLabel" name="testProgressLabel">
+                                <property name="text">
+                                    <string>Ожидание...</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QProgressBar" name="testProgressBar"/>
+                        </item>
+                    </layout>
+                </item>
+                <item>
+                    <layout class="QHBoxLayout" name="statsLayout">
+                        <item>
+                            <widget class="QLabel" name="statsLabel">
+                                <property name="text">
+                                    <string>Статус: Ожидание</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QLabel" name="workingCountLabel">
+                                <property name="text">
+                                    <string>✅: 0</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QLabel" name="failedCountLabel">
+                                <property name="text">
+                                    <string>❌: 0</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QLabel" name="testedCountLabel">
+                                <property name="text">
+                                    <string>📊: 0/0</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QLabel" name="countryCountLabel">
+                                <property name="text">
+                                    <string>🌍: 0 стран</string>
+                                </property>
+                            </widget>
+                        </item>
+                    </layout>
+                </item>
+                <item>
+                    <layout class="QHBoxLayout" name="vpnButtonLayout">
+                        <item>
+                            <widget class="QPushButton" name="connectButton">
+                                <property name="text">
+                                    <string>🔗 Подключиться</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QPushButton" name="disconnectButton">
+                                <property name="text">
+                                    <string>❌ Отключить</string>
+                                </property>
+                            </widget>
+                        </item>
+                    </layout>
+                </item>
+                <item>
+                    <widget class="QFrame" name="vpnStatusFrame">
+                        <property name="frameShape">
+                            <enum>QFrame::StyledPanel</enum>
+                        </property>
+                        <layout class="QVBoxLayout" name="verticalLayout_2">
+                            <item>
+                                <widget class="QLabel" name="vpnStatusLabel">
+                                    <property name="text">
+                                        <string>VPN: ❌ Отключено</string>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <widget class="QLabel" name="vpnInfoLabel">
+                                    <property name="text">
+                                        <string/>
+                                    </property>
+                                </widget>
+                            </item>
+                        </layout>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QLabel" name="label_2">
+                        <property name="text">
+                            <string>Лог тестирования:</string>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QTextEdit" name="testLogArea">
+                        <property name="maximumHeight">
+                            <number>200</number>
+                        </property>
+                        <property name="readOnly">
+                            <bool>true</bool>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QLabel" name="label_3">
+                        <property name="text">
+                            <string>Рабочие VPN серверы:</string>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QListWidget" name="serverList"/>
+                </item>
+                <item>
+                    <widget class="QLabel" name="label_4">
+                        <property name="text">
+                            <string>Информация о сервере:</string>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QTextEdit" name="infoText">
+                        <property name="maximumHeight">
+                            <number>100</number>
+                        </property>
+                        <property name="readOnly">
+                            <bool>true</bool>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <widget class="QProgressBar" name="progressBar"/>
+                </item>
+                <item>
+                    <widget class="QLabel" name="statusLabel">
+                        <property name="text">
+                            <string>Готово к работе</string>
+                        </property>
+                    </widget>
+                </item>
+                <item>
+                    <layout class="QHBoxLayout" name="logLayout">
+                        <item>
+                            <widget class="QLabel" name="label_5">
+                                <property name="text">
+                                    <string>Общий лог:</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QPushButton" name="clearLogButton">
+                                <property name="text">
+                                    <string>Очистить</string>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QPushButton" name="saveLogButton">
+                                <property name="text">
+                                    <string>Сохранить</string>
+                                </property>
+                            </widget>
+                        </item>
+                    </layout>
+                </item>
+                <item>
+                    <widget class="QTextEdit" name="logArea">
+                        <property name="maximumHeight">
+                            <number>120</number>
+                        </property>
+                        <property name="readOnly">
+                            <bool>true</bool>
+                        </property>
+                    </widget>
+                </item>
+            </layout>
+        </widget>
+    </widget>
+    <resources/>
+    <connections/>
+</ui>
