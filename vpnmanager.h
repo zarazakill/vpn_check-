@@ -3,8 +3,6 @@
 
 #include <QObject>
 #include <QProcess>
-#include <QMutex>
-#include <QPointer>
 #include "vpntypes.h"
 
 class VpnManager : public QObject {
@@ -29,15 +27,13 @@ private slots:
     void vpnProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
 private:
-    mutable QMutex mutex;  // Для синхронизации доступа к данным
-    QPointer<QProcess> process;
+    QProcess* process;
     bool isConnected;
     VpnServer currentServer;
     QString configPath;
 
     QString enhanceConfigForConnection(const QString& configContent, const VpnServer& server);
     void cleanup();
-    void safeCleanup();  // Безопасная очистка процессов
 };
 
 #endif // VPNMANAGER_H

@@ -63,8 +63,9 @@ private:
     QList<VpnServer> servers;
     QList<VpnServer> workingServers;
 
-    QPointer<ServerDownloaderThread> downloaderThread;
-    QPointer<ServerTesterThread> testerThread;
+    // Вместо QPointer используем обычные указатели, но будем осторожны
+    ServerDownloaderThread* downloaderThread;
+    ServerTesterThread* testerThread;
     VpnManager* vpnManager;
 
     bool isTestingAll;
@@ -86,8 +87,6 @@ private:
     void addLog(const QString& message, const QString& level = "INFO");
     void saveLogs();
     void manualTestServer(const VpnServer& server);
-
-
 };
 
 #endif // MAINWINDOW_H

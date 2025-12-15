@@ -12,19 +12,13 @@ VpnManager::VpnManager(QObject *parent)
 }
 
 void VpnManager::connectToServer(const VpnServer& server) {
-    QMutexLocker locker(&mutex);
     if (isConnected) {
-        locker.unlock();
         emit connectionStatus("warning", "Уже подключено к VPN");
         return;
     }
 
-    locker.unlock();
     try {
-        locker.relock();
         currentServer = server;
-        locker.unlock();
-        
         emit connectionStatus("info", QString("Подключаюсь к %1...").arg(server.name));
         emit connectionLog(QString("🚀 Начинаю подключение к %1").arg(server.name));
 
@@ -34,32 +28,24 @@ void VpnManager::connectToServer(const VpnServer& server) {
         // Создаем временный файл в домашней директории, чтобы он не удалялся автоматически
         QString tempDir = QDir::tempPath();
         QString tempFileName = QString("vpngate_%1.ovpn").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
-        QString configPathLocal = QDir(tempDir).filePath(tempFileName);
+        configPath = QDir(tempDir).filePath(tempFileName);
 
-        QFile configFile(configPathLocal);
+        QFile configFile(configPath);
         if (!configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            locker.unlock();
             emit connectionStatus("error", "Не удалось создать конфиг");
             emit connectionLog(QString("❌ Ошибка создания файла: %1").arg(configFile.errorString()));
             return;
         }
 
-        locker.relock();
         QString enhancedConfig = enhanceConfigForConnection(configContent, server);
-        locker.unlock();
-        
         QTextStream stream(&configFile);
         stream << enhancedConfig;
         configFile.close();
 
-        locker.relock();
-        this->configPath = configPathLocal;
-        locker.unlock();
-        
-        emit connectionLog(QString("📄 Конфиг сохранен: %1").arg(configPathLocal));
+        emit connectionLog(QString("📄 Конфиг сохранен: %1").arg(configPath));
 
         // Проверяем существование файла
-        if (!QFile::exists(configPathLocal)) {
+        if (!QFile::exists(configPath)) {
             emit connectionStatus("error", "Файл конфигурации не найден");
             emit connectionLog("❌ Файл конфигурации был удален");
             return;
@@ -68,7 +54,7 @@ void VpnManager::connectToServer(const VpnServer& server) {
         QStringList cmd = {
             "sudo",
             "openvpn",
-            "--config", configPathLocal,
+            "--config", configPath,
             "--auth-user-pass", "/dev/stdin",
             "--verb", "3",
             "--connect-timeout", "30"
@@ -76,163 +62,113 @@ void VpnManager::connectToServer(const VpnServer& server) {
 
         emit connectionLog("🔧 Запускаю OpenVPN...");
 
-        locker.relock();
-        safeCleanup(); // Убедимся, что старый процесс удален
         process = new QProcess(this);
         process->setProcessChannelMode(QProcess::MergedChannels);
-        locker.unlock();
 
-        // Подключаем сигналы с Qt::QueuedConnection для избежания гонок данных
-        connect(process, &QProcess::readyRead, this, &VpnManager::readVpnOutput, Qt::QueuedConnection);
+        connect(process, &QProcess::readyRead, this, &VpnManager::readVpnOutput);
         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, &VpnManager::vpnProcessFinished, Qt::QueuedConnection);
+                this, &VpnManager::vpnProcessFinished);
 
         // Запускаем процесс
-        locker.relock();
-        QProcess* localProcess = process.data();
-        locker.unlock();
-        
-        if (localProcess) {
-            localProcess->start(cmd[0], cmd.mid(1));
+        process->start(cmd[0], cmd.mid(1));
 
-            if (!localProcess->waitForStarted(3000)) {
-                emit connectionStatus("error", "Не удалось запустить OpenVPN");
-                emit connectionLog(QString("❌ Ошибка запуска: %1").arg(localProcess->errorString()));
-                safeCleanup();
-                return;
-            }
-
-            // Отправляем учетные данные
-            localProcess->write("vpn\nvpn\n");
-            localProcess->closeWriteChannel();
-
-            // Таймер для проверки подключения
-            QTimer::singleShot(30000, this, [this, localProcess]() {
-                QMutexLocker timerLocker(&mutex);
-                if (!isConnected && localProcess && localProcess->state() == QProcess::Running) {
-                    timerLocker.unlock();
-                    emit connectionStatus("error", "Таймаут подключения");
-                    emit connectionLog("⏰ Таймаут подключения (30 секунд)");
-                    disconnect();
-                }
-            });
+        if (!process->waitForStarted(3000)) {
+            emit connectionStatus("error", "Не удалось запустить OpenVPN");
+            emit connectionLog(QString("❌ Ошибка запуска: %1").arg(process->errorString()));
+            cleanup();
+            return;
         }
+
+        // Отправляем учетные данные
+        process->write("vpn\nvpn\n");
+        process->closeWriteChannel();
+
+        // Таймер для проверки подключения
+        QTimer::singleShot(30000, this, [this]() {
+            if (!isConnected && process && process->state() == QProcess::Running) {
+                emit connectionStatus("error", "Таймаут подключения");
+                emit connectionLog("⏰ Таймаут подключения (30 секунд)");
+                disconnect();
+            }
+        });
 
     } catch (const std::exception& e) {
         emit connectionStatus("error", QString("Ошибка подключения: %1").arg(e.what()));
-        safeCleanup();
+        cleanup();
     }
 }
 
 void VpnManager::disconnect() {
-    QMutexLocker locker(&mutex);
-    bool wasConnected = isConnected;
-    locker.unlock();
-    
-    if (wasConnected) {
+    if (isConnected) {
         emit connectionStatus("info", "Отключаюсь...");
         emit connectionLog("🔌 Отключаю VPN...");
     }
 
-    locker.relock();
-    QProcess* localProcess = process.data();
-    locker.unlock();
-    
-    if (localProcess && localProcess->state() == QProcess::Running) {
-        // Безопасное завершение процесса - сначала SIGTERM, затем SIGKILL
-        localProcess->terminate();
-        if (!localProcess->waitForFinished(5000)) {
-            localProcess->kill();
-            localProcess->waitForFinished(1000);
+    if (process && process->state() == QProcess::Running) {
+        process->terminate();
+        if (!process->waitForFinished(5000)) {
+            process->kill();
+            process->waitForFinished(1000);
         }
     }
 
-    safeCleanup();
+    cleanup();
 
-    locker.relock();
-    if (wasConnected) {
+    if (isConnected) {
         isConnected = false;
-        locker.unlock();
         emit disconnected();
         emit connectionStatus("info", "Отключено");
-    } else {
-        locker.unlock();
     }
 }
 
 QPair<QString, QString> VpnManager::getStatus() const {
-    QMutexLocker locker(&mutex);
     if (isConnected) {
         return qMakePair(QString("connected"), currentServer.name);
+    } else if (process && process->state() == QProcess::Running) {
+        return qMakePair(QString("connecting"), QString("Подключение..."));
     } else {
-        QProcess* localProcess = process.data();
-        if (localProcess && localProcess->state() == QProcess::Running) {
-            return qMakePair(QString("connecting"), QString("Подключение..."));
-        } else {
-            return qMakePair(QString("disconnected"), QString("Отключено"));
-        }
+        return qMakePair(QString("disconnected"), QString("Отключено"));
     }
 }
 
 QVariantMap VpnManager::getConnectionInfo() const {
-    QMutexLocker locker(&mutex);
     if (isConnected) {
-        VpnServer localServer = currentServer;
-        locker.unlock();
-        
         QVariantMap info;
-        info["server"] = localServer.name;
-        info["country"] = localServer.country;
-        info["ip"] = localServer.ip;
-        info["speed"] = localServer.speedMbps;
+        info["server"] = currentServer.name;
+        info["country"] = currentServer.country;
+        info["ip"] = currentServer.ip;
+        info["speed"] = currentServer.speedMbps;
         return info;
     }
-    locker.unlock();
     return QVariantMap();
 }
 
 void VpnManager::readVpnOutput() {
-    QMutexLocker locker(&mutex);
-    QProcess* localProcess = process.data();
-    if (!localProcess) {
-        locker.unlock();
-        return;
-    }
+    if (!process) return;
 
-    locker.unlock();
-    while (localProcess->canReadLine()) {
-        QString line = QString::fromUtf8(localProcess->readLine()).trimmed();
+    while (process->canReadLine()) {
+        QString line = QString::fromUtf8(process->readLine()).trimmed();
         if (!line.isEmpty()) {
             emit connectionLog(QString("🔍 %1").arg(line));
 
-            locker.relock();
             if (line.contains("Initialization Sequence Completed")) {
                 isConnected = true;
-                VpnServer localServer = currentServer;
-                locker.unlock();
-                emit connectionStatus("success", QString("✅ Подключено к %1").arg(localServer.name));
+                emit connectionStatus("success", QString("✅ Подключено к %1").arg(currentServer.name));
                 emit connectionLog("🎉 VPN подключение установлено!");
-                emit connected(localServer.name);
+                emit connected(currentServer.name);
             } else if (line.contains("AUTH_FAILED")) {
-                locker.unlock();
                 emit connectionStatus("error", "Ошибка аутентификации");
                 emit connectionLog("❌ Неверный логин/пароль");
                 disconnect();
             } else if (line.contains("TLS Error")) {
-                locker.unlock();
                 emit connectionStatus("error", "Ошибка TLS");
                 emit connectionLog("❌ Ошибка TLS handshake");
             } else if (line.contains("SIGTERM") || line.contains("process exiting")) {
                 // Процесс завершается
                 if (isConnected) {
                     isConnected = false;
-                    locker.unlock();
                     emit disconnected();
-                } else {
-                    locker.unlock();
                 }
-            } else {
-                locker.unlock();
             }
         }
     }
@@ -242,22 +178,15 @@ void VpnManager::vpnProcessFinished(int exitCode, QProcess::ExitStatus exitStatu
     Q_UNUSED(exitCode);
     Q_UNUSED(exitStatus);
 
-    QMutexLocker locker(&mutex);
-    bool wasConnected = isConnected;
-    if (wasConnected) {
+    if (isConnected) {
         isConnected = false;
-        locker.unlock();
         emit disconnected();
         emit connectionStatus("info", "Соединение разорвано");
-    } else {
-        QProcess* localProcess = process.data();
-        locker.unlock();
-        if (localProcess && localProcess->exitCode() != 0) {
-            emit connectionStatus("error", QString("Ошибка подключения (код: %1)").arg(localProcess->exitCode()));
-        }
+    } else if (process && process->exitCode() != 0) {
+        emit connectionStatus("error", QString("Ошибка подключения (код: %1)").arg(process->exitCode()));
     }
 
-    safeCleanup();
+    cleanup();
 }
 
 QString VpnManager::enhanceConfigForConnection(const QString& configContent, const VpnServer& server) {
@@ -311,45 +240,19 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
     return enhancedLines.join('\n');
 }
 
-void VpnManager::safeCleanup() {
-    QMutexLocker locker(&mutex);
-    
+void VpnManager::cleanup() {
     // Удаляем временный файл через 5 секунд, чтобы дать OpenVPN время прочитать его
     if (!configPath.isEmpty() && QFile::exists(configPath)) {
-        QString localConfigPath = configPath;
-        locker.unlock();
-        
-        QTimer::singleShot(5000, [localConfigPath]() {
-            if (QFile::exists(localConfigPath)) {
-                QFile::remove(localConfigPath);
+        QTimer::singleShot(5000, [configPath = this->configPath]() {
+            if (QFile::exists(configPath)) {
+                QFile::remove(configPath);
             }
         });
-        
-        locker.relock();
         configPath.clear();
     }
 
-    QProcess* localProcess = process.data();
-    if (localProcess) {
-        // Отключаем все сигналы от процесса
-        disconnect(localProcess, nullptr, nullptr, nullptr);
-        
-        // Завершаем процесс корректно
-        if (localProcess->state() == QProcess::Running) {
-            localProcess->terminate();
-            if (!localProcess->waitForFinished(5000)) {
-                localProcess->kill();
-                localProcess->waitForFinished(1000);
-            }
-        }
-        
-        // Удаляем через deleteLater для безопасного удаления в правильном потоке
-        localProcess->deleteLater();
+    if (process) {
+        process->deleteLater();
+        process = nullptr;
     }
-    
-    process.clear(); // Очищаем QPointer
-}
-
-void VpnManager::cleanup() {
-    safeCleanup();
 }

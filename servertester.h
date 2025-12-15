@@ -3,8 +3,8 @@
 
 #include <QThread>
 #include <QProcess>
-#include <QPointer>
 #include <QMutex>
+#include <QMutexLocker>
 #include "vpntypes.h"
 
 class ServerTesterThread : public QThread {
@@ -33,7 +33,7 @@ private:
     QString testOvpnConfig;
     QProcess* process;
     bool isCanceled;
-    QMutex mutex;  // Для синхронизации
+    mutable QMutex mutex;  // Изменили на mutable
 
     QString findOpenvpn();
     void killAllOpenvpn();

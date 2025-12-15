@@ -35,9 +35,12 @@ void ServerTesterThread::setOvpnConfig(const QString& configBase64) {
 
 void ServerTesterThread::run() {
     // Проверяем флаг отмены
-    if (isCanceled) {
-        emit realConnectionTestFinished(false, "Тест отменен");
-        return;
+    {
+        QMutexLocker locker(&mutex);
+        if (isCanceled) {
+            emit realConnectionTestFinished(false, "Тест отменен");
+            return;
+        }
     }
 
     emit testProgress(QString("🔍 Начинаю тестирование сервера: %1").arg(serverName));
@@ -46,14 +49,15 @@ void ServerTesterThread::run() {
     killAllOpenvpn();
     msleep(500);
 
-    QMutexLocker locker(&mutex);
-    if (testOvpnConfig.isEmpty()) {
-        emit realConnectionTestFinished(false, "Нет конфигурации");
-        return;
+    QString configCopy;
+    {
+        QMutexLocker locker(&mutex);
+        if (testOvpnConfig.isEmpty()) {
+            emit realConnectionTestFinished(false, "Нет конфигурации");
+            return;
+        }
+        configCopy = testOvpnConfig;
     }
-
-    QString configCopy = testOvpnConfig;
-    locker.unlock();
 
     int connectTime = 0;
     auto result = testRealOpenvpnConnection(connectTime);
@@ -65,11 +69,12 @@ void ServerTesterThread::run() {
 }
 
 void ServerTesterThread::cancel() {
-    QMutexLocker locker(&mutex);
-    isCanceled = true;
+    {
+        QMutexLocker locker(&mutex);
+        isCanceled = true;
+    }
 
     killAllOpenvpn();
-
     safeCleanup();
 
     if (isRunning()) {
@@ -87,20 +92,12 @@ void ServerTesterThread::safeCleanup() {
     QMutexLocker locker(&mutex);
 
     if (process) {
-        // Отключаем все сигналы от процесса
-        disconnect(process, nullptr, nullptr, nullptr);
-        
-        // Завершаем процесс корректно - сначала SIGTERM, затем SIGKILL
         if (process->state() == QProcess::Running) {
-            process->terminate();
-            if (!process->waitForFinished(3000)) {
-                process->kill();
-                process->waitForFinished(1000);
-            }
+            disconnect(process, nullptr, nullptr, nullptr);
+            process->kill();
+            process->waitForFinished(500);
         }
-        
-        // Безопасное удаление через deleteLater
-        process->deleteLater();
+        delete process;
         process = nullptr;
     }
 }
@@ -178,13 +175,14 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
     QTemporaryFile authFile;
 
     try {
-        QMutexLocker locker(&mutex);
-        if (testOvpnConfig.isEmpty()) {
-            return qMakePair(false, "Нет конфигурации");
+        QString configCopy;
+        {
+            QMutexLocker locker(&mutex);
+            if (testOvpnConfig.isEmpty()) {
+                return qMakePair(false, "Нет конфигурации");
+            }
+            configCopy = testOvpnConfig;
         }
-
-        QString configCopy = testOvpnConfig;
-        locker.unlock();
 
         QByteArray configData = QByteArray::fromBase64(configCopy.toLatin1());
         QString configContent = QString::fromUtf8(configData);
@@ -224,12 +222,13 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
             "--management", "127.0.0.1", "0"  // Отключаем management для чистоты
         };
 
-        locker.relock();
-        safeCleanup(); // Убедимся, что старый процесс удален
+        {
+            QMutexLocker locker(&mutex);
+            safeCleanup(); // Убедимся, что старый процесс удален
 
-        process = new QProcess();
-        process->setProcessChannelMode(QProcess::MergedChannels);
-        locker.unlock();
+            process = new QProcess();
+            process->setProcessChannelMode(QProcess::MergedChannels);
+        }
 
         // Запускаем процесс
         process->start(cmd[0], cmd.mid(1));
@@ -245,7 +244,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         QTimer timer;
         timer.setSingleShot(true);
 
-        // Подключаемся к локальной копии указателя
+        // Используем локальную копию указателя для безопасности
         QProcess* localProcess = process;
 
         auto connection = connect(localProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -265,9 +264,11 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
             output = QString::fromUtf8(localProcess->readAll());
         }
 
-        locker.relock();
-        bool processWasRunning = (process == localProcess);
-        locker.unlock();
+        bool processWasRunning = false;
+        {
+            QMutexLocker locker(&mutex);
+            processWasRunning = (process == localProcess);
+        }
 
         if (!processWasRunning) {
             return qMakePair(false, "Процесс был прерван");

@@ -58,21 +58,8 @@ MainWindow::~MainWindow() {
     stopTesting();
 
     if (downloaderThread && downloaderThread->isRunning()) {
-        disconnect(downloaderThread, nullptr, this, nullptr);
         downloaderThread->quit();
-        if (!downloaderThread->wait(2000)) {
-            downloaderThread->terminate();
-            downloaderThread->wait(1000);
-        }
-    }
-
-    if (testerThread && testerThread->isRunning()) {
-        disconnect(testerThread, nullptr, this, nullptr);
-        testerThread->quit();
-        if (!testerThread->wait(2000)) {
-            testerThread->terminate();
-            testerThread->wait(1000);
-        }
+        downloaderThread->wait(1000);
     }
 
     // Очищаем память
@@ -89,7 +76,6 @@ MainWindow::~MainWindow() {
 
     // Очищаем менеджер VPN
     if (vpnManager) {
-        vpnManager->disconnect(); // Отключаемся от VPN
         vpnManager->deleteLater();
         vpnManager = nullptr;
     }
@@ -129,10 +115,10 @@ void MainWindow::initUI() {
 
     qRegisterMetaType<QList<VpnServer>>("QList<VpnServer>");
 
-    connect(vpnManager, &VpnManager::connectionStatus, this, &MainWindow::onVpnStatus, Qt::QueuedConnection);
-    connect(vpnManager, &VpnManager::connectionLog, this, &MainWindow::onVpnLog, Qt::QueuedConnection);
-    connect(vpnManager, &VpnManager::connected, this, &MainWindow::onVpnConnected, Qt::QueuedConnection);
-    connect(vpnManager, &VpnManager::disconnected, this, &MainWindow::onVpnDisconnected, Qt::QueuedConnection);
+    connect(vpnManager, &VpnManager::connectionStatus, this, &MainWindow::onVpnStatus);
+    connect(vpnManager, &VpnManager::connectionLog, this, &MainWindow::onVpnLog);
+    connect(vpnManager, &VpnManager::connected, this, &MainWindow::onVpnConnected);
+    connect(vpnManager, &VpnManager::disconnected, this, &MainWindow::onVpnDisconnected);
 
     QTimer* statsTimer = new QTimer(this);
     connect(statsTimer, &QTimer::timeout, this, &MainWindow::updateStats);
@@ -558,9 +544,9 @@ void MainWindow::stopTesting() {
 
         // Даем время на завершение
         if (testerThread->isRunning()) {
-            if (!testerThread->wait(3000)) {
+            if (!testerThread->wait(2000)) {
                 testerThread->terminate();
-                testerThread->wait(2000);
+                testerThread->wait(1000);
             }
         }
 

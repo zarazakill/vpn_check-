@@ -7,6 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# Укажите явно компоненты Qt
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent)
 
 set(SOURCES
@@ -31,12 +32,16 @@ set(FORMS
 
 add_executable(VPNGateManager ${SOURCES} ${HEADERS} ${FORMS})
 
-target_link_libraries(VPNGateManager
+# Укажите публичные зависимости
+target_link_libraries(VPNGateManager PUBLIC
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
     Qt6::Concurrent
 )
+
+# Добавьте определения
+target_compile_definitions(VPNGateManager PRIVATE QT_CORE_LIB QT_WIDGETS_LIB)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(VPNGateManager PRIVATE QT_DEBUG)

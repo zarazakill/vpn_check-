@@ -2,7 +2,6 @@
 #define SERVERDOWNLOADER_H
 
 #include <QThread>
-#include <QMutex>
 #include "vpntypes.h"
 
 class ServerDownloaderThread : public QThread {
@@ -23,7 +22,6 @@ protected:
 private:
     QList<VpnServer> parseServersData(const QString& data);
     QString downloadWithRetry(const QStringList& urls);
-    mutable QMutex mutex;  // Защита общих данных
 };
 
 #endif // SERVERDOWNLOADER_H
