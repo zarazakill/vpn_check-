@@ -87,12 +87,20 @@ void ServerTesterThread::safeCleanup() {
     QMutexLocker locker(&mutex);
 
     if (process) {
+        // Отключаем все сигналы от процесса
+        disconnect(process, nullptr, nullptr, nullptr);
+        
+        // Завершаем процесс корректно - сначала SIGTERM, затем SIGKILL
         if (process->state() == QProcess::Running) {
-            disconnect(process, nullptr, nullptr, nullptr);
-            process->kill();
-            process->waitForFinished(500);
+            process->terminate();
+            if (!process->waitForFinished(3000)) {
+                process->kill();
+                process->waitForFinished(1000);
+            }
         }
-        delete process;
+        
+        // Безопасное удаление через deleteLater
+        process->deleteLater();
         process = nullptr;
     }
 }
