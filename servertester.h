@@ -3,6 +3,8 @@
 
 #include <QThread>
 #include <QProcess>
+#include <QPointer>
+#include <QMutex>
 #include "vpntypes.h"
 
 class ServerTesterThread : public QThread {
@@ -10,6 +12,8 @@ class ServerTesterThread : public QThread {
 
 public:
     explicit ServerTesterThread(const QString& serverIp, const QString& serverName, QObject *parent = nullptr);
+    ~ServerTesterThread();
+
     void setOvpnConfig(const QString& configBase64);
 
 public slots:
@@ -19,7 +23,6 @@ signals:
     void testFinished(bool success, const QString& message, int pingMs);
     void testProgress(const QString& message);
     void realConnectionTestFinished(bool success, const QString& message);
-    void debugOutput(const QString& message);
 
 protected:
     void run() override;
@@ -30,11 +33,16 @@ private:
     QString testOvpnConfig;
     QProcess* process;
     bool isCanceled;
+    QMutex mutex;  // Для синхронизации
 
     QString findOpenvpn();
     void killAllOpenvpn();
     QPair<bool, QString> testRealOpenvpnConnection(int& connectTime);
     QString enhanceConfig(const QString& config);
+
+    // Вспомогательные функции
+    bool isProcessRunning() const;
+    void safeCleanup();
 };
 
 #endif // SERVERTESTER_H

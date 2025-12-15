@@ -10,12 +10,26 @@
 #include <QTimer>
 #include <QEventLoop>
 #include <QCoreApplication>
+#include <QDebug>
 
 ServerTesterThread::ServerTesterThread(const QString& serverIp, const QString& serverName, QObject *parent)
 : QThread(parent), serverIp(serverIp), serverName(serverName), process(nullptr), isCanceled(false) {
+    qDebug() << "ServerTesterThread created for:" << serverName;
+}
+
+ServerTesterThread::~ServerTesterThread() {
+    qDebug() << "ServerTesterThread destroying for:" << serverName;
+    safeCleanup();
+
+    // Корректно завершаем поток
+    if (isRunning()) {
+        quit();
+        wait(1000);
+    }
 }
 
 void ServerTesterThread::setOvpnConfig(const QString& configBase64) {
+    QMutexLocker locker(&mutex);
     testOvpnConfig = configBase64;
 }
 
@@ -32,10 +46,14 @@ void ServerTesterThread::run() {
     killAllOpenvpn();
     msleep(500);
 
+    QMutexLocker locker(&mutex);
     if (testOvpnConfig.isEmpty()) {
         emit realConnectionTestFinished(false, "Нет конфигурации");
         return;
     }
+
+    QString configCopy = testOvpnConfig;
+    locker.unlock();
 
     int connectTime = 0;
     auto result = testRealOpenvpnConnection(connectTime);
@@ -47,17 +65,35 @@ void ServerTesterThread::run() {
 }
 
 void ServerTesterThread::cancel() {
+    QMutexLocker locker(&mutex);
     isCanceled = true;
+
     killAllOpenvpn();
 
-    if (process && process->state() == QProcess::Running) {
-        process->kill();
-        process->waitForFinished(500);
-    }
+    safeCleanup();
 
     if (isRunning()) {
         quit();
         wait(500);
+    }
+}
+
+bool ServerTesterThread::isProcessRunning() const {
+    QMutexLocker locker(&mutex);
+    return process && process->state() == QProcess::Running;
+}
+
+void ServerTesterThread::safeCleanup() {
+    QMutexLocker locker(&mutex);
+
+    if (process) {
+        if (process->state() == QProcess::Running) {
+            disconnect(process, nullptr, nullptr, nullptr);
+            process->kill();
+            process->waitForFinished(500);
+        }
+        delete process;
+        process = nullptr;
     }
 }
 
@@ -79,7 +115,7 @@ QString ServerTesterThread::findOpenvpn() {
 
     QProcess whichProcess;
     whichProcess.start("which", QStringList() << "openvpn");
-    whichProcess.waitForFinished(1000); // Уменьшаем таймаут
+    whichProcess.waitForFinished(1000);
 
     if (whichProcess.exitCode() == 0) {
         return QString::fromUtf8(whichProcess.readAllStandardOutput()).trimmed();
@@ -93,29 +129,37 @@ void ServerTesterThread::killAllOpenvpn() {
     QProcess killProcess;
 
     #ifdef Q_OS_LINUX
-    // Убиваем по имени процесса (используем killProcess синхронно)
-    killProcess.start("pkill", QStringList() << "-9" << "openvpn");
-    killProcess.waitForFinished(500);
+    // Более безопасный способ - сначала пытаемся завершить корректно
+    killProcess.start("pkill", QStringList() << "-SIGTERM" << "openvpn");
+    killProcess.waitForFinished(300);
 
-    killProcess.start("pkill", QStringList() << "-9" << "-f" << "tun999");
-    killProcess.waitForFinished(500);
+    killProcess.start("pkill", QStringList() << "-SIGTERM" << "-f" << "tun999");
+    killProcess.waitForFinished(300);
 
-    killProcess.start("pkill", QStringList() << "-9" << "-f" << "vpngate");
-    killProcess.waitForFinished(500);
+    killProcess.start("pkill", QStringList() << "-SIGTERM" << "-f" << "vpngate");
+    killProcess.waitForFinished(300);
 
-    killProcess.start("pkill", QStringList() << "-9" << "-f" << "test.ovpn");
-    killProcess.waitForFinished(500);
+    killProcess.start("pkill", QStringList() << "-SIGTERM" << "-f" << "test.ovpn");
+    killProcess.waitForFinished(300);
+
+    // Ждем немного
+    msleep(200);
+
+    // Если процессы еще живы, убиваем жестко
+    killProcess.start("pkill", QStringList() << "-SIGKILL" << "openvpn");
+    killProcess.waitForFinished(300);
+
+    killProcess.start("pkill", QStringList() << "-SIGKILL" << "-f" << "tun999");
+    killProcess.waitForFinished(300);
+
+    killProcess.start("pkill", QStringList() << "-SIGKILL" << "-f" << "vpngate");
+    killProcess.waitForFinished(300);
+
+    killProcess.start("pkill", QStringList() << "-SIGKILL" << "-f" << "test.ovpn");
+    killProcess.waitForFinished(300);
     #endif
 
-    // Также убиваем наш процесс, если он еще работает
-    if (process) {
-        if (process->state() == QProcess::Running) {
-            process->kill();
-            process->waitForFinished(500);
-        }
-        delete process;
-        process = nullptr;
-    }
+    safeCleanup();
 }
 
 QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectTime) {
@@ -126,11 +170,15 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
     QTemporaryFile authFile;
 
     try {
+        QMutexLocker locker(&mutex);
         if (testOvpnConfig.isEmpty()) {
             return qMakePair(false, "Нет конфигурации");
         }
 
-        QByteArray configData = QByteArray::fromBase64(testOvpnConfig.toLatin1());
+        QString configCopy = testOvpnConfig;
+        locker.unlock();
+
+        QByteArray configData = QByteArray::fromBase64(configCopy.toLatin1());
         QString configContent = QString::fromUtf8(configData);
 
         if (!tempFile.open()) {
@@ -156,103 +204,97 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
             return qMakePair(false, "OpenVPN не найден");
         }
 
-        // Увеличиваем verb для лучшего логирования
         QStringList cmd = {
             openvpnPath,
             "--config", tempFile.fileName(),
             "--auth-user-pass", authFile.fileName(),
-            "--verb", "1",  // Увеличили для отладки
-            "--connect-timeout", "15",  // Увеличили таймаут
+            "--verb", "1",
+            "--connect-timeout", "15",
             "--auth-retry", "nointeract",
             "--nobind",
-            "--dev", "tun999"
+            "--dev", "tun999",
+            "--management", "127.0.0.1", "0"  // Отключаем management для чистоты
         };
 
+        locker.relock();
+        safeCleanup(); // Убедимся, что старый процесс удален
+
         process = new QProcess();
-        process->setProcessChannelMode(QProcess::SeparateChannels);  // Разделяем каналы
-
-        // Сохраняем вывод для анализа
-        QString allOutput;
-
-        // Используем локальные указатели для захвата в лямбде
-        QProcess* proc = process;
-
-        connect(process, &QProcess::readyReadStandardOutput, this, [proc, &allOutput]() {
-            allOutput += QString::fromUtf8(proc->readAllStandardOutput());
-        });
-
-        connect(process, &QProcess::readyReadStandardError, this, [proc, &allOutput]() {
-            allOutput += QString::fromUtf8(proc->readAllStandardError());
-        });
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        locker.unlock();
 
         // Запускаем процесс
         process->start(cmd[0], cmd.mid(1));
 
         if (!process->waitForStarted(2000)) {
             QString error = QString("Не удалось запустить: %1").arg(process->errorString());
-            delete process;
-            process = nullptr;
+            safeCleanup();
             return qMakePair(false, error);
         }
 
-        // Ждем завершения с увеличенным таймаутом
+        // Ждем завершения с таймаутом
         QEventLoop loop;
         QTimer timer;
         timer.setSingleShot(true);
 
-        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                &loop, &QEventLoop::quit);
+        // Подключаемся к локальной копии указателя
+        QProcess* localProcess = process;
+
+        auto connection = connect(localProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                                  &loop, &QEventLoop::quit, Qt::QueuedConnection);
+
         connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
 
-        timer.start(15000); // Увеличили таймаут до 15 секунд
+        timer.start(15000); // Таймаут 15 секунд
         loop.exec();
+
+        disconnect(connection);
 
         connectTime = elapsedTimer.elapsed();
 
-        // Получаем оставшийся вывод после завершения
-        allOutput += QString::fromUtf8(proc->readAllStandardOutput());
-        allOutput += QString::fromUtf8(proc->readAllStandardError());
+        QString output;
+        if (localProcess) {
+            output = QString::fromUtf8(localProcess->readAll());
+        }
 
-        // Анализируем вывод OpenVPN
-        if (process->exitStatus() == QProcess::NormalExit) {
-            // Проверяем ключевые фразы в выводе
-            QString debugMsg = QString("OpenVPN output for %1: %2").arg(serverName).arg(allOutput);
-            qDebug() << debugMsg;
+        locker.relock();
+        bool processWasRunning = (process == localProcess);
+        locker.unlock();
 
-            if (process->exitCode() == 0) {
+        if (!processWasRunning) {
+            return qMakePair(false, "Процесс был прерван");
+        }
+
+        if (localProcess->exitStatus() == QProcess::NormalExit) {
+            if (localProcess->exitCode() == 0) {
                 // ОСНОВНОЕ ИСПРАВЛЕНИЕ: Проверяем, действительно ли установился туннель
-                if (allOutput.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
+                if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
                     return qMakePair(true, QString("Реальное подключение за %1ms").arg(connectTime));
                 } else {
                     // OpenVPN завершился с кодом 0, но туннель не установился
-                    return qMakePair(false, "Ошибка: туннель не установлен");
+                    return qMakePair(false, "Нет подтверждения подключения");
                 }
             } else {
-                if (allOutput.contains("AUTH_FAILED", Qt::CaseInsensitive) ||
-                    allOutput.contains("TLS Error", Qt::CaseInsensitive) ||
-                    allOutput.contains("connection timeout", Qt::CaseInsensitive) ||
-                    allOutput.contains("connection refused", Qt::CaseInsensitive) ||
-                    allOutput.contains("No route to host", Qt::CaseInsensitive)) {
+                if (output.contains("AUTH_FAILED", Qt::CaseInsensitive) ||
+                    output.contains("TLS Error", Qt::CaseInsensitive) ||
+                    output.contains("connection timeout", Qt::CaseInsensitive) ||
+                    output.contains("connection refused", Qt::CaseInsensitive)) {
                     return qMakePair(false, "Ошибка подключения");
                     }
-                    return qMakePair(false, QString("Ошибка (код: %1)").arg(process->exitCode()));
+                    return qMakePair(false, QString("Ошибка (код: %1)").arg(localProcess->exitCode()));
             }
         } else {
             // Таймаут или ошибка
-            if (process->state() == QProcess::Running) {
-                process->terminate();
-                if (!process->waitForFinished(1000)) {
-                    process->kill();
-                    process->waitForFinished(500);
+            if (localProcess->state() == QProcess::Running) {
+                localProcess->terminate();
+                if (!localProcess->waitForFinished(1000)) {
+                    localProcess->kill();
+                    localProcess->waitForFinished(500);
                 }
             }
 
-            // Получаем оставшийся вывод
-            allOutput += QString::fromUtf8(proc->readAllStandardOutput());
-            allOutput += QString::fromUtf8(proc->readAllStandardError());
-
             // Проверяем вывод даже при таймауте
-            if (allOutput.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
+            if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
                 return qMakePair(true, QString("Подключено (таймаут) за %1ms").arg(connectTime));
             }
 
@@ -260,6 +302,7 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         }
 
     } catch (const std::exception& e) {
+        safeCleanup();
         return qMakePair(false, QString("Исключение: %1").arg(e.what()));
     }
 }
@@ -267,9 +310,6 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
 QString ServerTesterThread::enhanceConfig(const QString& config) {
     QStringList lines = config.split('\n');
     QStringList enhancedLines;
-
-    bool hasRoute = false;
-    bool hasRedirect = false;
 
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
@@ -285,35 +325,21 @@ QString ServerTesterThread::enhanceConfig(const QString& config) {
         } else if (trimmed.contains("fragment") || trimmed.contains("mssfix")) {
             // Пропускаем проблемные настройки
             continue;
-        } else if (trimmed.startsWith("route ") || trimmed.startsWith("redirect-gateway")) {
-            // Отмечаем наличие маршрутов
-            if (trimmed.startsWith("redirect-gateway")) hasRedirect = true;
-            if (trimmed.startsWith("route ")) hasRoute = true;
-            enhancedLines.append(trimmed);
         } else {
             enhancedLines.append(trimmed);
         }
-    }
-
-    // Если нет маршрутизации, добавляем минимальную
-    if (!hasRedirect && !hasRoute) {
-        enhancedLines.append("route 8.8.8.8 255.255.255.255 net_gateway");
     }
 
     // Добавляем минимальные настройки для тестирования
     enhancedLines.append("nobind");
     enhancedLines.append("persist-key");
     enhancedLines.append("persist-tun");
-    enhancedLines.append("verb 1");  // Увеличили для отладки
-    enhancedLines.append("connect-timeout 15");  // Увеличили таймаут
+    enhancedLines.append("verb 1");
+    enhancedLines.append("connect-timeout 15");
     enhancedLines.append("auth-retry nointeract");
     enhancedLines.append("auth-nocache");
     enhancedLines.append("script-security 2");
     enhancedLines.append("remote-cert-tls server");
-
-    // Отключаем необязательные вещи для ускорения
-    enhancedLines.append("keepalive 5 30");
-    enhancedLines.append("reneg-sec 0");
 
     return enhancedLines.join('\n');
 }

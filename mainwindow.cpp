@@ -21,6 +21,7 @@
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
+#include <QPointer>
 
 #include <QDebug>
 
@@ -45,23 +46,38 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     initUI();
 
-    cleanupOldProcesses();
+    // Очистка старых процессов
+    QTimer::singleShot(500, this, &MainWindow::cleanupOldProcesses);
 
+    // Автоматическое обновление
     QTimer::singleShot(1000, this, &MainWindow::on_refreshButton_clicked);
 }
 
 MainWindow::~MainWindow() {
     // Корректно останавливаем все потоки перед удалением
+    stopTesting();
+
     if (downloaderThread && downloaderThread->isRunning()) {
         downloaderThread->quit();
         downloaderThread->wait(1000);
     }
 
-    if (testerThread && testerThread->isRunning()) {
-        // Останавливаем тестирование
-        testerThread->cancel();
-        testerThread->quit();
-        testerThread->wait(1000);
+    // Очищаем память
+    if (downloaderThread) {
+        downloaderThread->deleteLater();
+        downloaderThread = nullptr;
+    }
+
+    if (testerThread) {
+        // Удаляем через deleteLater для безопасности
+        testerThread->deleteLater();
+        testerThread = nullptr;
+    }
+
+    // Очищаем менеджер VPN
+    if (vpnManager) {
+        vpnManager->deleteLater();
+        vpnManager = nullptr;
     }
 
     delete ui;
@@ -124,15 +140,27 @@ void MainWindow::on_refreshButton_clicked() {
     addLog("🔄 Загружаю список серверов с VPNGate...", "INFO");
     ui->testLogArea->append("🔄 Загружаю список серверов...");
 
+    // Очищаем старый поток, если он есть
+    if (downloaderThread) {
+        downloaderThread->deleteLater();
+        downloaderThread = nullptr;
+    }
+
     downloaderThread = new ServerDownloaderThread(this);
     connect(downloaderThread, &ServerDownloaderThread::downloadFinished,
-            this, &MainWindow::onServersDownloaded);
+            this, &MainWindow::onServersDownloaded, Qt::QueuedConnection);
     connect(downloaderThread, &ServerDownloaderThread::downloadError,
-            this, &MainWindow::onDownloadError);
+            this, &MainWindow::onDownloadError, Qt::QueuedConnection);
     connect(downloaderThread, &ServerDownloaderThread::downloadProgress,
-            ui->progressBar, &QProgressBar::setValue);
+            ui->progressBar, &QProgressBar::setValue, Qt::QueuedConnection);
     connect(downloaderThread, &ServerDownloaderThread::logMessage,
-            this, &MainWindow::onDownloadLog);
+            this, &MainWindow::onDownloadLog, Qt::QueuedConnection);
+
+    // Автоматическое удаление потока после завершения
+    connect(downloaderThread, &QThread::finished, downloaderThread, &QObject::deleteLater);
+    connect(downloaderThread, &QThread::finished, this, [this]() {
+        downloaderThread = nullptr;
+    });
 
     downloaderThread->start();
 }
@@ -197,6 +225,7 @@ void MainWindow::onServersDownloaded(const QList<VpnServer>& servers) {
     ui->countryCountLabel->setText("🌍: 0 стран");
 
     ui->stopTestButton->setEnabled(true);
+    ui->refreshButton->setEnabled(false);
     isTestingAll = true;
 
     testNextServer();
@@ -244,6 +273,58 @@ void MainWindow::onTestProgress(const QString& message) {
         QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     ui->testLogArea->append(QString("[%1] %2").arg(timestamp).arg(message));
         }
+}
+
+void MainWindow::onRealTestFinished(bool success, const QString& message) {
+    // Не обрабатываем, если поток был удален
+    if (!sender()) {
+        return;
+    }
+
+    QString serverName;
+    if (sender()) {
+        serverName = sender()->property("serverName").toString();
+    }
+
+    if (!serverName.isEmpty()) {
+        QString level = success ? "SUCCESS" : "ERROR";
+        addLog(QString("%1: %2").arg(serverName).arg(message), level);
+
+        // Обновляем сервер только если тест успешен
+        if (success) {
+            for (int i = 0; i < servers.size(); ++i) {
+                if (servers[i].name == serverName) {
+                    servers[i].tested = true;
+                    servers[i].available = true;
+                    servers[i].realConnectionTested = true;
+
+                    QRegularExpression re("за (\\d+)ms");
+                    QRegularExpressionMatch match = re.match(message);
+                    if (match.hasMatch()) {
+                        servers[i].testPing = match.captured(1).toInt();
+                    } else {
+                        servers[i].testPing = 100;
+                    }
+
+                    // Проверяем, нет ли уже этого сервера в списке
+                    bool alreadyExists = false;
+                    for (const auto& server : workingServers) {
+                        if (server.name == servers[i].name) {
+                            alreadyExists = true;
+                            break;
+                        }
+                    }
+
+                    if (!alreadyExists) {
+                        workingServers.append(servers[i]);
+                    }
+                    break;
+                }
+            }
+
+            updateStats();
+        }
+    }
 }
 
 void MainWindow::onVpnStatus(const QString& type, const QString& message) {
@@ -303,12 +384,6 @@ void MainWindow::testNextServer() {
         return;
     }
 
-    // Очищаем старый поток
-    if (testerThread) {
-        testerThread->deleteLater();
-        testerThread = nullptr;
-    }
-
     VpnServer server = servers[currentTestIndex];
     currentTestIndex++;
 
@@ -331,7 +406,7 @@ void MainWindow::testNextServer() {
     testerThread->setProperty("serverName", server.name);
     testerThread->setOvpnConfig(server.configBase64);
 
-    // Подключаем сигналы
+    // Подключаем сигналы с Qt::QueuedConnection для безопасности
     connect(testerThread, &ServerTesterThread::testProgress,
             this, &MainWindow::onTestProgress, Qt::QueuedConnection);
 
@@ -339,59 +414,15 @@ void MainWindow::testNextServer() {
             this, &MainWindow::onRealTestFinished, Qt::QueuedConnection);
 
     // Автоматически удаляем поток после завершения
-    connect(testerThread, &QThread::finished, testerThread, &QObject::deleteLater);
-
-    // Запускаем следующий тест после завершения текущего
-    connect(testerThread, &QThread::finished, this, &MainWindow::testNextServer, Qt::QueuedConnection);
+    connect(testerThread, &QThread::finished, this, [this]() {
+        if (testerThread) {
+            testerThread->deleteLater();
+            testerThread = nullptr;
+            QMetaObject::invokeMethod(this, &MainWindow::testNextServer, Qt::QueuedConnection);
+        }
+    });
 
     testerThread->start();
-}
-
-void MainWindow::onRealTestFinished(bool success, const QString& message) {
-    QString serverName;
-    if (sender()) {
-        serverName = sender()->property("serverName").toString();
-    }
-
-    qDebug() << "Test result for" << serverName << ":" << success << message;
-
-    if (success && !serverName.isEmpty()) {
-        addLog(QString("%1: %2").arg(serverName).arg(message), "SUCCESS");
-
-        for (int i = 0; i < servers.size(); ++i) {
-            if (servers[i].name == serverName) {
-                servers[i].tested = true;
-                servers[i].available = true;
-                servers[i].realConnectionTested = true;
-
-                QRegularExpression re("за (\\d+)ms");
-                QRegularExpressionMatch match = re.match(message);
-                if (match.hasMatch()) {
-                    servers[i].testPing = match.captured(1).toInt();
-                } else {
-                    servers[i].testPing = 100;
-                }
-
-                // Проверяем, нет ли уже этого сервера в списке
-                bool alreadyExists = false;
-                for (const auto& server : workingServers) {
-                    if (server.name == servers[i].name) {
-                        alreadyExists = true;
-                        break;
-                    }
-                }
-
-                if (!alreadyExists) {
-                    workingServers.append(servers[i]);
-                }
-                break;
-            }
-        }
-
-        updateStats();
-    } else if (!message.isEmpty() && !serverName.isEmpty()) {
-        addLog(QString("%1: %2").arg(serverName).arg(message), "ERROR");
-    }
 }
 
 void MainWindow::onTestTimeout() {
@@ -420,11 +451,13 @@ void MainWindow::finishTesting() {
 
     // Корректно останавливаем тестер если он работает
     if (testerThread) {
+        disconnect(testerThread, nullptr, this, nullptr);
+
         if (testerThread->isRunning()) {
-            disconnect(testerThread, nullptr, this, nullptr);
             testerThread->quit();
             testerThread->wait(1000);
         }
+
         testerThread->deleteLater();
         testerThread = nullptr;
     }
@@ -506,16 +539,17 @@ void MainWindow::stopTesting() {
 
     // Корректно останавливаем тестер
     if (testerThread) {
-        if (testerThread->isRunning()) {
-            // Отключаем все соединения
-            disconnect(testerThread, nullptr, this, nullptr);
+        disconnect(testerThread, nullptr, this, nullptr);
+        testerThread->cancel();
 
-            testerThread->quit();
+        // Даем время на завершение
+        if (testerThread->isRunning()) {
             if (!testerThread->wait(2000)) {
                 testerThread->terminate();
                 testerThread->wait(1000);
             }
         }
+
         testerThread->deleteLater();
         testerThread = nullptr;
     }
@@ -650,15 +684,15 @@ void MainWindow::manualTestServer(const VpnServer& server) {
     ui->testSelectedButton->setEnabled(false);
     ui->testLogArea->append(QString("\n🔍 Ручная проверка %1...").arg(server.name));
 
+    // Очищаем старый поток
+    if (testerThread) {
+        testerThread->deleteLater();
+        testerThread = nullptr;
+    }
+
     testerThread = new ServerTesterThread(server.ip, server.name, this);
     testerThread->setProperty("serverName", server.name);
     testerThread->setOvpnConfig(server.configBase64);
-
-    connect(testerThread, &ServerTesterThread::testFinished,
-            this, [this, server](bool success, const QString& msg, int ping) {
-                QString level = success ? "SUCCESS" : "ERROR";
-                addLog(QString("%1: %2").arg(server.name).arg(msg), level);
-            });
 
     connect(testerThread, &ServerTesterThread::realConnectionTestFinished,
             this, [this, server](bool success, const QString& msg) {
@@ -667,6 +701,7 @@ void MainWindow::manualTestServer(const VpnServer& server) {
                 } else {
                     addLog(QString("❌ %1: %2").arg(server.name).arg(msg), "ERROR");
 
+                    // Удаляем сервер из списка рабочих
                     for (int i = 0; i < workingServers.size(); ++i) {
                         if (workingServers[i].name == server.name) {
                             workingServers.removeAt(i);
@@ -677,10 +712,16 @@ void MainWindow::manualTestServer(const VpnServer& server) {
                 }
                 ui->statusLabel->setText("Проверка завершена");
                 ui->testSelectedButton->setEnabled(true);
-            });
+
+                // Очищаем указатель
+                if (testerThread) {
+                    testerThread->deleteLater();
+                    testerThread = nullptr;
+                }
+            }, Qt::QueuedConnection);
 
     connect(testerThread, &ServerTesterThread::testProgress,
-            this, &MainWindow::onTestProgress);
+            this, &MainWindow::onTestProgress, Qt::QueuedConnection);
 
     testerThread->start();
 }
@@ -688,10 +729,20 @@ void MainWindow::manualTestServer(const VpnServer& server) {
 void MainWindow::cleanupOldProcesses() {
     QProcess process;
     #ifdef Q_OS_LINUX
-    process.start("pkill", QStringList() << "-f" << "openvpn.*tun999");
-    process.waitForFinished(1000);
-    process.start("pkill", QStringList() << "-f" << "openvpn.*vpngate");
-    process.waitForFinished(1000);
+    // Безопасная очистка процессов OpenVPN
+    process.start("pkill", QStringList() << "-SIGTERM" << "-f" << "openvpn.*tun999");
+    process.waitForFinished(300);
+    QThread::msleep(200);
+
+    process.start("pkill", QStringList() << "-SIGKILL" << "-f" << "openvpn.*tun999");
+    process.waitForFinished(300);
+
+    process.start("pkill", QStringList() << "-SIGTERM" << "-f" << "openvpn.*vpngate");
+    process.waitForFinished(300);
+    QThread::msleep(200);
+
+    process.start("pkill", QStringList() << "-SIGKILL" << "-f" << "openvpn.*vpngate");
+    process.waitForFinished(300);
     #endif
 }
 
