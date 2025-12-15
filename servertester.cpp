@@ -234,7 +234,15 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         process->start(cmd[0], cmd.mid(1));
 
         if (!process->waitForStarted(2000)) {
-            QString error = QString("Не удалось запустить: %1").arg(process->errorString());
+            QString error;
+            {
+                QMutexLocker locker(&mutex);
+                if (process) {
+                    error = QString("Не удалось запустить: %1").arg(process->errorString());
+                } else {
+                    error = QString("Не удалось запустить: процесс был удален");
+                }
+            }
             safeCleanup();
             return qMakePair(false, error);
         }
@@ -245,7 +253,16 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
         timer.setSingleShot(true);
 
         // Используем локальную копию указателя для безопасности
-        QProcess* localProcess = process;
+        QProcess* localProcess = nullptr;
+        {
+            QMutexLocker locker(&mutex);
+            localProcess = process;  // Сохраняем копию указателя под мьютексом
+        }
+
+        // Проверяем, что локальный указатель действителен
+        if (!localProcess) {
+            return qMakePair(false, QString("Процесс был удален до начала ожидания"));
+        }
 
         auto connection = connect(localProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                                   &loop, &QEventLoop::quit, Qt::QueuedConnection);
@@ -259,13 +276,19 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
 
         connectTime = elapsedTimer.elapsed();
 
+        // Получаем результаты безопасно
         QString output;
         bool processWasRunning = false;
+        int exitCode = -1;
+        QProcess::ExitStatus exitStatus;
+        
         {
             QMutexLocker locker(&mutex);
-            processWasRunning = (process == localProcess);
-            if (processWasRunning && localProcess) {
+            processWasRunning = (process && process == localProcess);
+            if (processWasRunning && localProcess && localProcess->state() != QProcess::NotRunning) {
                 output = QString::fromUtf8(localProcess->readAll());
+                exitCode = localProcess->exitCode();
+                exitStatus = localProcess->exitStatus();
             }
         }
 
@@ -273,41 +296,48 @@ QPair<bool, QString> ServerTesterThread::testRealOpenvpnConnection(int& connectT
             return qMakePair(false, QString("Процесс был прерван"));
         }
 
-        if (processWasRunning && localProcess->exitStatus() == QProcess::NormalExit) {
-            if (localProcess->exitCode() == 0) {
-                // ОСНОВНОЕ ИСПРАВЛЕНИЕ: Проверяем, действительно ли установился туннель
-                if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
-                    return qMakePair(true, QString("Реальное подключение за %1ms").arg(connectTime));
-                } else {
-                    // OpenVPN завершился с кодом 0, но туннель не установился
-                    return qMakePair(false, QString("Нет подтверждения подключения"));
-                }
-            } else {
-                if (output.contains("AUTH_FAILED", Qt::CaseInsensitive) ||
-                    output.contains("TLS Error", Qt::CaseInsensitive) ||
-                    output.contains("connection timeout", Qt::CaseInsensitive) ||
-                    output.contains("connection refused", Qt::CaseInsensitive)) {
-                    return qMakePair(false, QString("Ошибка подключения"));
+        // Проверяем статус выхода
+        {
+            QMutexLocker locker(&mutex);
+            if (process && process == localProcess && exitStatus == QProcess::NormalExit) {
+                if (exitCode == 0) {
+                    // ОСНОВНОЕ ИСПРАВЛЕНИЕ: Проверяем, действительно ли установился туннель
+                    if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
+                        return qMakePair(true, QString("Реальное подключение за %1ms").arg(connectTime));
+                    } else {
+                        // OpenVPN завершился с кодом 0, но туннель не установился
+                        return qMakePair(false, QString("Нет подтверждения подключения"));
                     }
-                    return qMakePair(false, QString("Ошибка (код: %1)").arg(localProcess->exitCode()));
-            }
-        } else {
-            // Таймаут или ошибка
-            if (processWasRunning && localProcess->state() == QProcess::Running) {
-                localProcess->terminate();
-                if (!localProcess->waitForFinished(1000)) {
-                    localProcess->kill();
-                    localProcess->waitForFinished(500);
+                } else {
+                    if (output.contains("AUTH_FAILED", Qt::CaseInsensitive) ||
+                        output.contains("TLS Error", Qt::CaseInsensitive) ||
+                        output.contains("connection timeout", Qt::CaseInsensitive) ||
+                        output.contains("connection refused", Qt::CaseInsensitive)) {
+                        return qMakePair(false, QString("Ошибка подключения"));
+                    }
+                    return qMakePair(false, QString("Ошибка (код: %1)").arg(exitCode));
                 }
             }
-
-            // Проверяем вывод даже при таймауте
-            if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
-                return qMakePair(true, QString("Подключено (таймаут) за %1ms").arg(connectTime));
-            }
-
-            return qMakePair(false, QString("Таймаут (%1ms)").arg(connectTime));
         }
+
+        // Таймаут или ошибка
+        {
+            QMutexLocker locker(&mutex);
+            if (process && process == localProcess && process->state() == QProcess::Running) {
+                process->terminate();
+                if (!process->waitForFinished(1000)) {
+                    process->kill();
+                    process->waitForFinished(500);
+                }
+            }
+        }
+
+        // Проверяем вывод даже при таймауте
+        if (output.contains("Initialization Sequence Completed", Qt::CaseInsensitive)) {
+            return qMakePair(true, QString("Подключено (таймаут) за %1ms").arg(connectTime));
+        }
+
+        return qMakePair(false, QString("Таймаут (%1ms)").arg(connectTime));
 
     } catch (const std::exception& e) {
         safeCleanup();
