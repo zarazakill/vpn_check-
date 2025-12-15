@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QTimer>
 #include <QDir>
+#include <QDateTime>
 
 VpnManager::VpnManager(QObject *parent)
 : QObject(parent), process(nullptr), isConnected(false) {
