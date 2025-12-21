@@ -195,6 +195,7 @@ private:
     void generateiOSConfig(const VpnServer& server, const QString& filePath);
     void generateWindowsConfig(const VpnServer& server, const QString& filePath);
     void generateRouterConfig(const VpnServer& server, const QString& filePath);
+    void showExportMenu(const QPoint& pos, const VpnServer& server);
     void showExportMenu(const QPoint& pos);
 
     // Новые методы для генерации конфигов шлюза

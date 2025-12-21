@@ -389,7 +389,7 @@ void MainWindow::on_exportConfigButton_clicked() {
     }
 
     VpnServer server = servers[row];
-    showExportMenu(ui->serverList->mapFromGlobal(QCursor::pos()));
+    exportServerConfig(server);
 }
 
 void MainWindow::on_shareVPNButton_clicked() {
@@ -1704,13 +1704,7 @@ void MainWindow::on_countryFilterButton_clicked() {
     }
 }
 
-void MainWindow::showExportMenu(const QPoint& pos) {
-    int row = ui->serverList->currentRow();
-    if (row < 0 || row >= servers.size()) {
-        return;
-    }
-
-    VpnServer server = servers[row];
+void MainWindow::showExportMenu(const QPoint& pos, const VpnServer& server) {
     QPoint globalPos = ui->serverList->viewport()->mapToGlobal(pos);
 
     QMenu menu(this);
@@ -1785,6 +1779,18 @@ void MainWindow::showExportMenu(const QPoint& pos) {
     });
 
     menu.exec(globalPos);
+}
+
+void MainWindow::showExportMenu(const QPoint& pos) {
+    int row = ui->serverList->currentRow();
+    if (row < 0 || row >= servers.size()) {
+        QMessageBox::warning(this, "Выберите сервер",
+                             "Пожалуйста, выберите сервер из списка для экспорта конфигурации");
+        return;
+    }
+
+    VpnServer server = servers[row];
+    showExportMenu(pos, server);
 }
 
 void MainWindow::exportOpenVPNConfig(const VpnServer& server, const QString& filePath) {
@@ -2204,6 +2210,7 @@ void MainWindow::onServerListContextMenu(const QPoint& pos) {
     QAction* copyIPAction = new QAction("📋 Скопировать IP", &menu);
     QAction* copyConfigAction = new QAction("📄 Скопировать конфиг", &menu);
     QAction* exportConfigAction = new QAction("💾 Экспорт конфига", &menu);
+    QAction* exportPlatformConfigAction = new QAction("📱 Экспорт для разных платформ", &menu);
 
     bool isCountryBlocked = blockedCountries.contains(server.country);
     QString countryActionText = isCountryBlocked ?
@@ -2217,6 +2224,7 @@ void MainWindow::onServerListContextMenu(const QPoint& pos) {
     menu.addAction(copyIPAction);
     menu.addAction(copyConfigAction);
     menu.addAction(exportConfigAction);
+    menu.addAction(exportPlatformConfigAction);
     menu.addSeparator();
     menu.addAction(toggleCountryAction);
 
@@ -2246,6 +2254,10 @@ void MainWindow::onServerListContextMenu(const QPoint& pos) {
 
     connect(exportConfigAction, &QAction::triggered, [this, server]() {
         exportServerConfig(server);
+    });
+
+    connect(exportPlatformConfigAction, &QAction::triggered, [this, server, pos]() {
+        showExportMenu(pos, server);
     });
 
     menu.exec(ui->serverList->viewport()->mapToGlobal(pos));
@@ -2415,8 +2427,12 @@ void MainWindow::exportServerConfig(const VpnServer& server) {
             file.close();
             addLog(QString("Конфигурация сервера %1 экспортирована в %2")
             .arg(server.name).arg(fileName), "SUCCESS");
+            QMessageBox::information(this, "Успех", 
+                                     QString("Конфигурация сервера %1 успешно экспортирована в:\\n%2").arg(server.name).arg(fileName));
         } else {
-            QMessageBox::warning(this, "Ошибка", "Не удалось сохранить файл");
+            addLog(QString("Ошибка экспорта конфигурации сервера %1").arg(server.name), "ERROR");
+            QMessageBox::warning(this, "Ошибка", 
+                                 QString("Не удалось сохранить файл:\\n%1\\n\\nПроверьте права доступа к папке.").arg(fileName));
         }
     }
 }
