@@ -98,8 +98,8 @@ QList<VpnServer> ServerDownloaderThread::parseServersData(const QString& data) {
         server.sessions = parts[7];
         server.uptime = parts[8];
         server.tested = false;
-        server.available = false;
-        server.testPing = 999;
+        server.available = true; // Все серверы считаем доступными без тестирования
+        server.testPing = server.ping; // Используем пинг из данных
         server.realConnectionTested = false;
 
         try {

@@ -7,13 +7,75 @@
 #include <QTimer>
 #include <QDir>
 #include <QDateTime>
+#include <QCoreApplication>
+#include <QDebug>
+#include <csignal>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 VpnManager::VpnManager(QObject *parent)
-: QObject(parent), process(nullptr), isConnected(false) {
+: QObject(parent), process(nullptr), m_isConnected(false), connectionTimeout(45) {
+    // Игнорируем SIGPIPE для предотвращения крашей при записи в закрытый pipe
+    std::signal(SIGPIPE, SIG_IGN);
+}
+
+QString VpnManager::findOpenVPN() {
+    QStringList possiblePaths = {
+        "openvpn",
+        "/usr/sbin/openvpn",
+        "/usr/bin/openvpn",
+        "/sbin/openvpn",
+        "/bin/openvpn",
+        "/usr/local/sbin/openvpn",
+        "/usr/local/bin/openvpn",
+        "/opt/local/sbin/openvpn",
+        "/opt/local/bin/openvpn"
+    };
+
+    QProcess whichProcess;
+    whichProcess.start("which", QStringList() << "openvpn");
+    whichProcess.waitForFinished(1000);
+
+    if (whichProcess.exitCode() == 0) {
+        QString path = QString::fromUtf8(whichProcess.readAllStandardOutput()).trimmed();
+        if (!path.isEmpty() && QFile::exists(path)) {
+            return path;
+        }
+    }
+
+    for (const QString& path : possiblePaths) {
+        QProcess testProcess;
+        testProcess.start(path, QStringList() << "--version");
+        testProcess.waitForFinished(1000);
+
+        if (testProcess.exitCode() == 0) {
+            return path;
+        }
+    }
+
+    QProcess whereisProcess;
+    whereisProcess.start("whereis", QStringList() << "-b" << "openvpn");
+    whereisProcess.waitForFinished(1000);
+
+    QString output = QString::fromUtf8(whereisProcess.readAllStandardOutput());
+    if (output.contains("openvpn:")) {
+        QStringList parts = output.split(':');
+        if (parts.size() > 1) {
+            QStringList bins = parts[1].trimmed().split(' ');
+            for (const QString& bin : bins) {
+                if (QFile::exists(bin) && QFileInfo(bin).isExecutable()) {
+                    return bin;
+                }
+            }
+        }
+    }
+
+    return QString();
 }
 
 void VpnManager::connectToServer(const VpnServer& server) {
-    if (isConnected) {
+    if (m_isConnected) {
         emit connectionStatus("warning", "Уже подключено к VPN");
         return;
     }
@@ -26,9 +88,13 @@ void VpnManager::connectToServer(const VpnServer& server) {
         QByteArray configData = QByteArray::fromBase64(server.configBase64.toLatin1());
         QString configContent = QString::fromUtf8(configData);
 
-        // Создаем временный файл в домашней директории, чтобы он не удалялся автоматически
         QString tempDir = QDir::tempPath();
-        QString tempFileName = QString("vpngate_%1.ovpn").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
+        QString safeServerName = server.name;
+        safeServerName.replace(QRegularExpression("[^a-zA-Z0-9]"), "_");
+
+        QString tempFileName = QString("vpngate_%1_%2.ovpn")
+        .arg(safeServerName)
+        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
         configPath = QDir(tempDir).filePath(tempFileName);
 
         QFile configFile(configPath);
@@ -45,30 +111,116 @@ void VpnManager::connectToServer(const VpnServer& server) {
 
         emit connectionLog(QString("📄 Конфиг сохранен: %1").arg(configPath));
 
-        // Проверяем существование файла
         if (!QFile::exists(configPath)) {
             emit connectionStatus("error", "Файл конфигурации не найден");
             emit connectionLog("❌ Файл конфигурации был удален");
             return;
         }
 
-        QStringList cmd = {
-            "sudo",
-            "openvpn",
-            "--config", configPath,
-            "--auth-user-pass", "/dev/stdin",
-            "--verb", "3",
-            "--connect-timeout", "30"
-        };
+        QString openvpnPath = findOpenVPN();
+        if (openvpnPath.isEmpty()) {
+            emit connectionStatus("error", "OpenVPN не найден");
+            emit connectionLog("❌ OpenVPN не найден в системе");
+            return;
+        }
+
+        emit connectionLog(QString("✅ Найден OpenVPN: %1").arg(openvpnPath));
+
+        QStringList cmd;
+        if (getuid() == 0) {
+            cmd = {
+                openvpnPath,
+                "--config", configPath,
+                "--auth-user-pass", "/dev/stdin",
+                "--verb", "3",
+                "--connect-timeout", QString::number(connectionTimeout)
+            };
+        } else {
+            cmd = {
+                "sudo",
+                openvpnPath,
+                "--config", configPath,
+                "--auth-user-pass", "/dev/stdin",
+                "--verb", "3",
+                "--connect-timeout", QString::number(connectionTimeout)
+            };
+        }
 
         emit connectionLog("🔧 Запускаю OpenVPN...");
 
+        // Создаем новый процесс
         process = new QProcess(this);
         process->setProcessChannelMode(QProcess::MergedChannels);
 
-        connect(process, &QProcess::readyRead, this, &VpnManager::readVpnOutput);
+        // Используем лямбду для безопасного чтения вывода
+        connect(process, &QProcess::readyRead, this, [this]() {
+            // QPointer автоматически проверяет, жив ли объект
+            if (!process) {
+                return;
+            }
+
+            QProcess* currentProcess = process.data();
+            if (!currentProcess || currentProcess->state() == QProcess::NotRunning) {
+                return;
+            }
+
+            try {
+                while (currentProcess->canReadLine()) {
+                    QByteArray data = currentProcess->readLine();
+                    if (data.isEmpty()) break;
+
+                    QString line = QString::fromUtf8(data).trimmed();
+                    if (!line.isEmpty()) {
+                        emit connectionLog(QString("🔍 %1").arg(line));
+
+                        if (line.contains("Initialization Sequence Completed")) {
+                            m_isConnected = true;
+                            emit connectionStatus("success", QString("✅ Подключено к %1").arg(currentServer.name));
+                            emit connectionLog("🎉 VPN подключение установлено!");
+                            emit connected(currentServer.name);
+                        } else if (line.contains("AUTH_FAILED")) {
+                            emit connectionStatus("error", "Ошибка аутентификации");
+                            emit connectionLog("❌ Неверный логин/пароль");
+                            QTimer::singleShot(0, this, &VpnManager::disconnect);
+                        } else if (line.contains("TLS Error")) {
+                            emit connectionStatus("error", "Ошибка TLS");
+                            emit connectionLog("❌ Ошибка TLS handshake");
+                            QTimer::singleShot(0, this, &VpnManager::disconnect);
+                        } else if (line.contains("SIGTERM") || line.contains("process exiting")) {
+                            if (m_isConnected) {
+                                m_isConnected = false;
+                                emit disconnected();
+                            }
+                        } else if (line.contains("Error reading username from Auth authfile: /dev/stdin")) {
+                            emit connectionStatus("error", "Ошибка переподключения");
+                            emit connectionLog("❌ OpenVPN пытается перечитать учетные данные");
+                            QTimer::singleShot(0, this, &VpnManager::disconnect);
+                        } else if (line.contains("Options error: --keepalive conflicts with --ping")) {
+                            emit connectionStatus("error", "Ошибка конфигурации OpenVPN");
+                            emit connectionLog("❌ Конфликт опций keepalive и ping");
+                            QTimer::singleShot(0, this, &VpnManager::disconnect);
+                        }
+                    }
+                }
+            } catch (const std::exception& e) {
+                qDebug() << "Exception in readVpnOutput lambda:" << e.what();
+            } catch (...) {
+                qDebug() << "Unknown exception in readVpnOutput lambda";
+            }
+        });
+
+        // Обработка завершения процесса
         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, &VpnManager::vpnProcessFinished);
+
+        // Обработка ошибок запуска
+        connect(process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                emit connectionStatus("error", "Не удалось запустить OpenVPN");
+                emit connectionLog("❌ Ошибка запуска OpenVPN");
+                cleanup();
+            }
+        });
 
         // Запускаем процесс
         process->start(cmd[0], cmd.mid(1));
@@ -81,14 +233,18 @@ void VpnManager::connectToServer(const VpnServer& server) {
         }
 
         // Отправляем учетные данные
-        process->write("vpn\nvpn\n");
-        process->closeWriteChannel();
+        QString credentials = "vpn\nvpn\n";
+        if (process->state() == QProcess::Running) {
+            process->write(credentials.toUtf8());
+            process->waitForBytesWritten(1000);
+            process->closeWriteChannel();
+        }
 
         // Таймер для проверки подключения
-        QTimer::singleShot(30000, this, [this]() {
-            if (!isConnected && process && process->state() == QProcess::Running) {
+        QTimer::singleShot(connectionTimeout * 1000, this, [this]() {
+            if (!m_isConnected && process && process->state() == QProcess::Running) {
                 emit connectionStatus("error", "Таймаут подключения");
-                emit connectionLog("⏰ Таймаут подключения (30 секунд)");
+                emit connectionLog(QString("⏰ Таймаут подключения (%1 секунд)").arg(connectionTimeout));
                 disconnect();
             }
         });
@@ -96,34 +252,45 @@ void VpnManager::connectToServer(const VpnServer& server) {
     } catch (const std::exception& e) {
         emit connectionStatus("error", QString("Ошибка подключения: %1").arg(e.what()));
         cleanup();
+    } catch (...) {
+        emit connectionStatus("error", "Неизвестная ошибка подключения");
+        cleanup();
     }
 }
 
 void VpnManager::disconnect() {
-    if (isConnected) {
+    if (m_isConnected) {
         emit connectionStatus("info", "Отключаюсь...");
         emit connectionLog("🔌 Отключаю VPN...");
     }
 
-    if (process && process->state() == QProcess::Running) {
-        process->terminate();
-        if (!process->waitForFinished(5000)) {
-            process->kill();
-            process->waitForFinished(1000);
+    if (process) {
+        QProcess* currentProcess = process.data();
+        if (currentProcess && currentProcess->state() == QProcess::Running) {
+            emit connectionLog("📤 Отправляю сигнал завершения...");
+
+            // Пробуем корректно завершить
+            currentProcess->terminate();
+
+            if (!currentProcess->waitForFinished(2000)) {
+                emit connectionLog("⚠️ OpenVPN не отвечает, принудительно завершаю...");
+                currentProcess->kill();
+                currentProcess->waitForFinished(500);
+            }
         }
     }
 
     cleanup();
 
-    if (isConnected) {
-        isConnected = false;
+    if (m_isConnected) {
+        m_isConnected = false;
         emit disconnected();
         emit connectionStatus("info", "Отключено");
     }
 }
 
 QPair<QString, QString> VpnManager::getStatus() const {
-    if (isConnected) {
+    if (m_isConnected) {
         return qMakePair(QString("connected"), currentServer.name);
     } else if (process && process->state() == QProcess::Running) {
         return qMakePair(QString("connecting"), QString("Подключение..."));
@@ -133,7 +300,7 @@ QPair<QString, QString> VpnManager::getStatus() const {
 }
 
 QVariantMap VpnManager::getConnectionInfo() const {
-    if (isConnected) {
+    if (m_isConnected) {
         QVariantMap info;
         info["server"] = currentServer.name;
         info["country"] = currentServer.country;
@@ -144,34 +311,156 @@ QVariantMap VpnManager::getConnectionInfo() const {
     return QVariantMap();
 }
 
-void VpnManager::readVpnOutput() {
-    if (!process) return;
+void VpnManager::readVpnOutput()
+{
+    if (!process || !process->isOpen()) return;
 
-    while (process->canReadLine()) {
-        QString line = QString::fromUtf8(process->readLine()).trimmed();
-        if (!line.isEmpty()) {
-            emit connectionLog(QString("🔍 %1").arg(line));
+    QByteArray output = process->readAllStandardOutput();
+    QByteArray errors = process->readAllStandardError();
+    QByteArray combined = output + errors;
 
-            if (line.contains("Initialization Sequence Completed")) {
-                isConnected = true;
-                emit connectionStatus("success", QString("✅ Подключено к %1").arg(currentServer.name));
+    if (combined.isEmpty()) return;
+
+    QTextStream stream(combined);
+    QString line;
+    while (stream.readLineInto(&line)) {
+        line = line.trimmed();
+        if (line.isEmpty()) continue;
+
+        emit connectionLog(QString("🔍 %1").arg(line));
+
+        // Успешное подключение
+        if (line.contains("Initialization Sequence Completed")) {
+            if (!m_isConnected) {
+                m_isConnected = true;
+                m_lastConnectionTime = QDateTime::currentDateTime();
+                emit connectionEstablished();
+                emit connectionStatus("success", "VPN подключение установлено!");
                 emit connectionLog("🎉 VPN подключение установлено!");
-                emit connected(currentServer.name);
-            } else if (line.contains("AUTH_FAILED")) {
-                emit connectionStatus("error", "Ошибка аутентификации");
-                emit connectionLog("❌ Неверный логин/пароль");
-                disconnect();
-            } else if (line.contains("TLS Error")) {
-                emit connectionStatus("error", "Ошибка TLS");
-                emit connectionLog("❌ Ошибка TLS handshake");
-            } else if (line.contains("SIGTERM") || line.contains("process exiting")) {
-                // Процесс завершается
-                if (isConnected) {
-                    isConnected = false;
-                    emit disconnected();
-                }
             }
+            continue;
         }
+
+        // Ошибки аутентификации
+        if (line.contains("AUTH_FAILED")) {
+            emit connectionStatus("error", "Ошибка аутентификации на сервере");
+            emit connectionLog("❌ Ошибка аутентификации: сервер отклонил логин/пароль");
+            QTimer::singleShot(0, this, &VpnManager::disconnect);
+            continue;
+        }
+
+        // Критические сетевые или TLS ошибки
+        if (line.contains("TLS Error") ||
+            line.contains("Connection reset") ||
+            line.contains("TCP connection failed") ||
+            line.contains("TLS key negotiation failed") ||
+            line.contains("write UDP: Operation not permitted") ||
+            line.contains("Bad encapsulated packet length") ||
+            line.contains("Fatal TLS error")) {
+            emit connectionStatus("error", "Сетевая или TLS ошибка");
+        emit connectionLog("⚠️ Сетевая или TLS ошибка, попытка подключения прервана");
+        QTimer::singleShot(0, this, &VpnManager::disconnect);
+        continue;
+            }
+
+            // Ошибки конфигурации
+            if (line.contains("Error reading username from Auth authfile") ||
+                line.contains("Cannot open TUN/TAP dev") ||
+                line.contains("Cannot allocate TUN/TAP dev dynamically")) {
+                emit connectionStatus("error", "Ошибка конфигурации OpenVPN");
+            emit connectionLog("❌ Ошибка конфигурации OpenVPN");
+            QTimer::singleShot(0, this, &VpnManager::disconnect);
+            continue;
+                }
+
+                // Ошибки сжатия данных (новая обработка)
+                if (line.contains("Bad compression stub decompression header byte") ||
+                    line.contains("Decompress error") ||
+                    line.contains("bad compression stub decompression header")) {
+                    emit connectionStatus("warning", "Конфликт настроек сжатия");
+                emit connectionLog("⚠️ Конфликт настроек сжатия с сервером");
+
+                // Пробуем исправить настройки сжатия на лету
+                emit connectionLog("🔄 Пытаюсь исправить настройки сжатия...");
+
+                // Отправляем команду для переподключения с новыми настройками
+                if (process && process->state() == QProcess::Running) {
+                    // Отправляем SIGUSR1 для мягкого переподключения
+                    process->write("signal SIGUSR1\n");
+                    process->waitForBytesWritten(100);
+
+                    // Также отправляем команду для изменения настроек сжатия
+                    QString restartCommand = "echo \"comp-lzo adaptive\" > /dev/stdin\n";
+                    process->write(restartCommand.toUtf8());
+                    process->waitForBytesWritten(100);
+                }
+
+                // Если через 5 секунд ошибка сохраняется, переподключаемся полностью
+                QTimer::singleShot(5000, this, [this]() {
+                    if (m_isConnected && process && process->state() == QProcess::Running) {
+                        // Проверяем, сохраняется ли проблема
+                        emit connectionLog("🔄 Полное переподключение для исправления сжатия...");
+
+                        // Сохраняем текущий сервер
+                        VpnServer tempServer = currentServer;
+
+                        // Отключаемся
+                        disconnect();
+
+                        // Переподключаемся с задержкой
+                        QTimer::singleShot(2000, this, [this, tempServer]() {
+                            emit connectionLog("🔄 Переподключаюсь с исправленными настройками сжатия...");
+                            connectToServer(tempServer);
+                        });
+                    }
+                });
+
+                continue;
+                    }
+
+                    // Проблемы с маршрутизацией
+                    if (line.contains("ROUTE: route addition failed") ||
+                        line.contains("Cannot ioctl TUNSETIFF") ||
+                        line.contains("TUN/TAP device") ||
+                        line.contains("route gateway is not reachable")) {
+                        emit connectionStatus("warning", "Проблема с маршрутизацией");
+                    emit connectionLog("⚠️ Возможная проблема с маршрутами VPN");
+
+                    // Пробуем исправить, отправив команду перенастройки маршрутов
+                    if (process && process->state() == QProcess::Running) {
+                        QString routeCommand = "echo \"route-nopull\" > /dev/stdin\n";
+                        process->write(routeCommand.toUtf8());
+                        process->waitForBytesWritten(100);
+                    }
+
+                    continue;
+                        }
+
+                        // Предупреждения о deprecated опциях
+                        if (line.contains("deprecated") || line.contains("WARNING:")) {
+                            emit connectionLog(QString("ℹ️ %1").arg(line));
+                            continue;
+                        }
+
+                        // Неизвестные критические ошибки
+                        if (line.contains("Exiting due to fatal error") ||
+                            line.contains("SIGTERM[soft,") ||
+                            line.contains("Process exiting")) {
+                            if (m_isConnected) {
+                                m_isConnected = false;
+                                emit connectionLost();
+                                emit connectionStatus("info", "Соединение закрыто");
+                                emit connectionLog("🔌 Соединение с VPN завершено");
+                            }
+                            }
+
+                            // Информационные сообщения о переподключении
+                            if (line.contains("SIGUSR1") || line.contains("soft reset")) {
+                                emit connectionLog(QString("🔄 %1").arg(line));
+                                if (line.contains("connection reset")) {
+                                    emit connectionStatus("info", "Переподключение...");
+                                }
+                            }
     }
 }
 
@@ -179,12 +468,16 @@ void VpnManager::vpnProcessFinished(int exitCode, QProcess::ExitStatus exitStatu
     Q_UNUSED(exitCode);
     Q_UNUSED(exitStatus);
 
-    if (isConnected) {
-        isConnected = false;
+    bool wasConnected = m_isConnected;
+
+    if (wasConnected) {
+        m_isConnected = false;
         emit disconnected();
         emit connectionStatus("info", "Соединение разорвано");
+        emit connectionLog("🔗 VPN соединение закрыто");
     } else if (process && process->exitCode() != 0) {
-        emit connectionStatus("error", QString("Ошибка подключения (код: %1)").arg(process->exitCode()));
+        QString exitCodeStr = QString::number(process->exitCode());
+        emit connectionStatus("error", QString("Ошибка подключения (код: %1)").arg(exitCodeStr));
     }
 
     cleanup();
@@ -202,26 +495,41 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
             continue;
         }
 
-        // Убираем problem строки
         if (trimmed.startsWith(";") || trimmed.startsWith("#")) {
             enhancedLines.append(trimmed);
             continue;
         }
 
-        if (trimmed.startsWith("cipher ")) {
-            QString cipher = trimmed.split(' ')[1];
-            enhancedLines.append(QString("# %1").arg(trimmed));
-            enhancedLines.append(QString("data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:%1").arg(cipher));
-            enhancedLines.append(QString("data-ciphers-fallback %1").arg(cipher));
-        } else if (trimmed.contains("fragment") || trimmed.contains("mssfix")) {
-            // Пропускаем проблемные настройки
-            enhancedLines.append(QString("# %1  # Отключено для совместимости").arg(trimmed));
-        } else {
-            enhancedLines.append(trimmed);
-        }
+        // Игнорируем настройки ping от сервера, но НЕ настройки сжатия
+        if (trimmed.startsWith("ping ") || trimmed.startsWith("ping-restart ") ||
+            trimmed.startsWith("keepalive ") || trimmed.startsWith("ping-timer-rem")) {
+            enhancedLines.append(QString("# %1  # Игнорируем, устанавливаем свои").arg(trimmed));
+        continue;
+            }
+
+            if (trimmed.startsWith("cipher ")) {
+                QString cipher = trimmed.split(' ')[1];
+                enhancedLines.append(QString("# %1").arg(trimmed));
+                enhancedLines.append(QString("data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:%1").arg(cipher));
+                enhancedLines.append(QString("data-ciphers-fallback %1").arg(cipher));
+            } else if (trimmed.contains("fragment") || trimmed.contains("mssfix")) {
+                enhancedLines.append(QString("# %1  # Отключено для совместимости").arg(trimmed));
+            } else if (trimmed.startsWith("comp-lzo") || trimmed.contains("compress")) {
+                // ВАЖНО: Не игнорируем настройки сжатия от сервера
+                // Вместо этого, комментируем их и добавляем соответствующую настройку
+                if (trimmed.contains("lzo")) {
+                    enhancedLines.append(QString("# %1").arg(trimmed));
+                    enhancedLines.append("comp-lzo yes");  // Разрешаем сжатие
+                } else if (trimmed.contains("stub")) {
+                    enhancedLines.append(QString("# %1").arg(trimmed));
+                    enhancedLines.append("comp-lzo no");  // Используем stub compression
+                }
+            } else {
+                enhancedLines.append(trimmed);
+            }
     }
 
-    // Добавляем необходимые опции
+    // Добавляем наши оптимизации
     enhancedLines.append("\n# Оптимизации для VPNGate");
     enhancedLines.append("remote-cert-tls server");
     enhancedLines.append("tls-client");
@@ -231,18 +539,61 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
     enhancedLines.append("auth-nocache");
     enhancedLines.append("connect-retry 2");
     enhancedLines.append("connect-retry-max 3");
-    enhancedLines.append("connect-timeout 30");
-    enhancedLines.append("keepalive 10 60");
+    enhancedLines.append(QString("connect-timeout %1").arg(connectionTimeout));
+
+    // Блокируем только настройки ping, НЕ настройки сжатия
+    enhancedLines.append("pull-filter ignore \"ping\"");
+    enhancedLines.append("pull-filter ignore \"ping-restart\"");
+    enhancedLines.append("pull-filter ignore \"keepalive\"");
+    enhancedLines.append("pull-filter ignore \"explicit-exit-notify\"");
+
+    // НЕ блокируем настройки сжатия:
+    // enhancedLines.append("pull-filter ignore \"comp-lzo\"");
+    // enhancedLines.append("pull-filter ignore \"compress\"");
+
+    // Наши собственные настройки keepalive
+    enhancedLines.append("keepalive 15 180");
+
     enhancedLines.append("tun-mtu 1500");
+    enhancedLines.append("mssfix 1450");
     enhancedLines.append("persist-key");
     enhancedLines.append("persist-tun");
     enhancedLines.append("nobind");
+
+    // Для лучшей стабильности
+    enhancedLines.append("resolv-retry infinite");
+    enhancedLines.append("mute-replay-warnings");
+
+    // Дополнительные опции - УБИРАЕМ явное указание comp-lzo
+    enhancedLines.append("explicit-exit-notify 0");
+    // УБРАНО: enhancedLines.append("comp-lzo no");  // Это вызывает конфликт
+    enhancedLines.append("auth SHA1");
+
+    // Настройки логирования
+    enhancedLines.append("verb 3");
+    enhancedLines.append("mute 10");
 
     return enhancedLines.join('\n');
 }
 
 void VpnManager::cleanup() {
-    // Удаляем временный файл через 5 секунд, чтобы дать OpenVPN время прочитать его
+    // Отключаем все сигналы от process
+    if (process) {
+        QObject::disconnect(process, nullptr, this, nullptr);
+
+        // Если процесс еще работает, завершаем его
+        QProcess* currentProcess = process.data();
+        if (currentProcess && currentProcess->state() == QProcess::Running) {
+            currentProcess->kill();
+            currentProcess->waitForFinished(100);
+        }
+
+        // QPointer автоматически управляет временем жизни
+        // Просто очищаем указатель
+        process.clear();
+    }
+
+    // Удаляем временный файл конфигурации
     if (!configPath.isEmpty() && QFile::exists(configPath)) {
         QTimer::singleShot(5000, [configPath = this->configPath]() {
             if (QFile::exists(configPath)) {
@@ -250,10 +601,5 @@ void VpnManager::cleanup() {
             }
         });
         configPath.clear();
-    }
-
-    if (process) {
-        process->deleteLater();
-        process = nullptr;
     }
 }

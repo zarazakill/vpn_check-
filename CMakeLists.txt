@@ -7,23 +7,26 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Укажите явно компоненты Qt
-find_package(Qt5 REQUIRED COMPONENTS Core Widgets Network Concurrent)
+# Находим Qt6 компоненты
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent)
+
+# Если нужны дополнительные модули для будущих расширений
+# find_package(Qt6 COMPONENTS Quick Qml)
 
 set(SOURCES
     main.cpp
     mainwindow.cpp
     serverdownloader.cpp
-    servertester.cpp
     vpnmanager.cpp
+    servertester.cpp  # Добавляем сервер тестер
 )
 
 set(HEADERS
     mainwindow.h
     vpntypes.h
     serverdownloader.h
-    servertester.h
     vpnmanager.h
+    servertester.h    # Добавляем сервер тестер
 )
 
 set(FORMS
@@ -32,21 +35,43 @@ set(FORMS
 
 add_executable(VPNGateManager ${SOURCES} ${HEADERS} ${FORMS})
 
-# Укажите публичные зависимости
-target_link_libraries(VPNGateManager PUBLIC
-    Qt5::Core
-    Qt5::Widgets
-    Qt5::Network
-    Qt5::Concurrent
+# Подключаем Qt6 модули
+target_link_libraries(VPNGateManager
+    Qt6::Core
+    Qt6::Widgets
+    Qt6::Network
+    Qt6::Concurrent
 )
 
-# Добавьте определения
-target_compile_definitions(VPNGateManager PRIVATE QT_CORE_LIB QT_WIDGETS_LIB)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(VPNGateManager PRIVATE QT_DEBUG)
-else()
-    target_compile_definitions(VPNGateManager PRIVATE QT_NO_DEBUG)
+# Для Linux добавляем системные библиотеки
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(VPNGateManager pthread)
 endif()
 
+# Настройки компиляции
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(VPNGateManager PRIVATE QT_DEBUG)
+    target_compile_options(VPNGateManager PRIVATE -g -O0 -Wall -Wextra)
+else()
+    target_compile_definitions(VPNGateManager PRIVATE QT_NO_DEBUG)
+    target_compile_options(VPNGateManager PRIVATE -O2)
+endif()
+
+# Установка
 install(TARGETS VPNGateManager DESTINATION bin)
+
+# Копирование иконки приложения (если есть)
+# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/icons/app-icon.png")
+#     install(FILES icons/app-icon.png DESTINATION share/icons)
+# endif()
+
+# Создание .desktop файла для Linux (опционально, можно добавить позже)
+# if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VPNGateManager.desktop.in")
+#     configure_file(
+#         "${CMAKE_CURRENT_SOURCE_DIR}/VPNGateManager.desktop.in"
+#         "${CMAKE_CURRENT_BINARY_DIR}/VPNGateManager.desktop"
+#         @ONLY
+#     )
+#     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/VPNGateManager.desktop"
+#             DESTINATION share/applications)
+# endif()

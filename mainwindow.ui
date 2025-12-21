@@ -1,245 +1,1141 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
-    <class>MainWindow</class>
-    <widget class="QMainWindow" name="MainWindow">
-        <property name="geometry">
-            <rect>
-                <x>0</x>
-                <y>0</y>
-                <width>500</width>
-                <height>900</height>
-            </rect>
-        </property>
-        <property name="windowTitle">
-            <string>VPNGate Manager</string>
-        </property>
-        <widget class="QWidget" name="centralwidget">
-            <layout class="QVBoxLayout" name="verticalLayout">
+  <class>MainWindow</class>
+  <widget class="QMainWindow" name="MainWindow">
+    <property name="geometry">
+      <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>1100</width>
+        <height>800</height>
+      </rect>
+    </property>
+    <property name="minimumSize">
+      <size>
+        <width>950</width>
+        <height>650</height>
+      </size>
+    </property>
+    <property name="windowTitle">
+      <string>VPNGate Manager Pro</string>
+    </property>
+    <property name="styleSheet">
+      <string notr="true">/* Основной фон */
+        QMainWindow {
+        background-color: #f0f2f5;
+        font-family: 'Segoe UI', 'Arial', sans-serif;
+        }
+
+        /* Общие стили для всех виджетов */
+        QWidget {
+        color: #333333;
+        font-size: 13px;
+        }
+
+        /* Заголовки групп */
+        QGroupBox {
+        font-weight: bold;
+        border: 2px solid #d1d9e6;
+        border-radius: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        background-color: white;
+        color: #2c3e50;
+        }
+        QGroupBox::title {
+        subcontrol-origin: margin;
+        left: 12px;
+        padding: 0 8px 0 8px;
+        color: #2c3e50;
+        font-size: 13px;
+        font-weight: bold;
+        }
+
+        /* Основные кнопки - стандартные */
+        QPushButton {
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 13px;
+        border: 1px solid #d1d9e6;
+        background-color: #f8f9fa;
+        color: #495057;
+        min-height: 36px;
+        }
+        QPushButton:hover {
+        background-color: #e9ecef;
+        border-color: #adb5bd;
+        }
+        QPushButton:pressed {
+        background-color: #dee2e6;
+        }
+        QPushButton:disabled {
+        background-color: #f8f9fa;
+        color: #adb5bd;
+        border-color: #e9ecef;
+        }
+
+        /* Специальные кнопки - цветные */
+        #connectButton {
+        background-color: #28a745;
+        color: white;
+        border-color: #28a745;
+        font-weight: bold;
+        }
+        #connectButton:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        }
+        #connectButton:disabled {
+        background-color: #6c757d;
+        border-color: #6c757d;
+        }
+
+        #disconnectButton {
+        background-color: #dc3545;
+        color: white;
+        border-color: #dc3545;
+        font-weight: bold;
+        }
+        #disconnectButton:hover {
+        background-color: #c82333;
+        border-color: #bd2130;
+        }
+
+        #refreshButton {
+        background-color: #007bff;
+        color: white;
+        border-color: #007bff;
+        }
+        #refreshButton:hover {
+        background-color: #0069d9;
+        border-color: #0062cc;
+        }
+
+        #countryFilterButton {
+        background-color: #6c757d;
+        color: white;
+        border-color: #6c757d;
+        }
+        #countryFilterButton:hover {
+        background-color: #5a6268;
+        border-color: #545b62;
+        }
+
+        /* Кнопки инструментов */
+        #exportConfigButton, #shareVPNButton, #createGatewayConfigButton {
+        background-color: #17a2b8;
+        color: white;
+        border-color: #17a2b8;
+        font-size: 12px;
+        padding: 6px 12px;
+        }
+        #exportConfigButton:hover, #shareVPNButton:hover, #createGatewayConfigButton:hover {
+        background-color: #138496;
+        border-color: #117a8b;
+        }
+
+        /* Кнопки Gateway */
+        #gatewayStartButton {
+        background-color: #20c997;
+        color: white;
+        border-color: #20c997;
+        }
+        #gatewayStartButton:hover {
+        background-color: #1ba87e;
+        border-color: #199d76;
+        }
+
+        #gatewayStopButton {
+        background-color: #fd7e14;
+        color: white;
+        border-color: #fd7e14;
+        }
+        #gatewayStopButton:hover {
+        background-color: #e56b00;
+        border-color: #d86200;
+        }
+
+        /* Кнопки логов */
+        #clearLogButton, #saveLogButton {
+        background-color: #6c757d;
+        color: white;
+        border-color: #6c757d;
+        padding: 6px 12px;
+        font-size: 12px;
+        }
+        #clearLogButton:hover, #saveLogButton:hover {
+        background-color: #5a6268;
+        border-color: #545b62;
+        }
+
+        /* Кнопка сброса неудачных */
+        #resetFailedButton {
+        background-color: #6c757d;
+        color: white;
+        border-color: #6c757d;
+        padding: 6px 12px;
+        font-size: 12px;
+        }
+        #resetFailedButton:hover {
+        background-color: #5a6268;
+        border-color: #545b62;
+        }
+
+        /* Кнопки сортировки - переключаемые */
+        #sortBySpeedButton, #sortByPingButton, #sortByCountryButton {
+        background-color: #e9ecef;
+        color: #495057;
+        border: 1px solid #dee2e6;
+        padding: 4px 8px;
+        font-size: 11px;
+        border-radius: 4px;
+        min-height: 28px;
+        }
+        #sortBySpeedButton:checked, #sortByPingButton:checked, #sortByCountryButton:checked {
+        background-color: #007bff;
+        color: white;
+        border-color: #007bff;
+        }
+        #sortBySpeedButton:hover, #sortByPingButton:hover, #sortByCountryButton:hover {
+        background-color: #dee2e6;
+        }
+
+        /* Кнопки быстрого подключения */
+        #quickConnectFastButton, #quickConnectStableButton, #quickConnectRandomButton {
+        background-color: #6c757d;
+        color: white;
+        border-color: #6c757d;
+        padding: 6px 12px;
+        font-size: 12px;
+        }
+        #quickConnectFastButton:hover, #quickConnectStableButton:hover, #quickConnectRandomButton:hover {
+        background-color: #5a6268;
+        border-color: #545b62;
+        }
+
+        /* Список серверов */
+        #serverList {
+        border: 1px solid #d1d9e6;
+        border-radius: 6px;
+        background-color: white;
+        font-size: 12px;
+        alternate-background-color: #f8f9fa;
+        }
+        #serverList::item {
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f3f5;
+        min-height: 55px;
+        }
+        #serverList::item:selected {
+        background-color: #e3f2fd;
+        border-left: 3px solid #007bff;
+        color: black;
+        }
+        #serverList::item:hover {
+        background-color: #f8f9fa;
+        }
+        #serverList::item:alternate {
+        background-color: #f8f9fa;
+        }
+
+        /* Прогресс бар */
+        QProgressBar {
+        border: 1px solid #d1d9e6;
+        border-radius: 4px;
+        text-align: center;
+        background-color: white;
+        height: 20px;
+        font-size: 11px;
+        }
+        QProgressBar::chunk {
+        background-color: #007bff;
+        border-radius: 4px;
+        }
+
+        /* Текстовые поля */
+        QTextEdit, QPlainTextEdit {
+        border: 1px solid #d1d9e6;
+        border-radius: 6px;
+        background-color: white;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 11px;
+        padding: 8px;
+        selection-background-color: #007bff;
+        selection-color: white;
+        }
+        QTextEdit:focus, QPlainTextEdit:focus {
+        border-color: #80bdff;
+        outline: 0;
+        box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+
+        /* Табы */
+        QTabWidget::pane {
+        border: 1px solid #d1d9e6;
+        border-radius: 6px;
+        background-color: white;
+        margin-top: 4px;
+        }
+        QTabBar::tab {
+        background-color: #f8f9fa;
+        padding: 8px 16px;
+        margin-right: 2px;
+        border-radius: 4px 4px 0 0;
+        border: 1px solid #d1d9e6;
+        border-bottom: none;
+        font-size: 12px;
+        }
+        QTabBar::tab:selected {
+        background-color: white;
+        color: #007bff;
+        font-weight: bold;
+        border-bottom: 2px solid white;
+        margin-bottom: -1px;
+        }
+        QTabBar::tab:hover:!selected {
+        background-color: #e9ecef;
+        }
+        QTabBar::tab:first {
+        border-top-left-radius: 6px;
+        }
+        QTabBar::tab:last {
+        border-top-right-radius: 6px;
+        }
+
+        /* Метки */
+        QLabel {
+        color: #495057;
+        font-size: 13px;
+        }
+        QLabel#titleLabel {
+        font-size: 20px;
+        font-weight: bold;
+        color: #2c3e50;
+        }
+        QLabel#statsLabel {
+        font-size: 12px;
+        color: #6c757d;
+        }
+
+        /* Статистические метки */
+        #workingCountLabel, #countryCountLabel, #failedCountLabel {
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        margin: 0 2px;
+        }
+        #workingCountLabel {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+        }
+        #countryCountLabel {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+        }
+        #failedCountLabel {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+        }
+
+        /* Чекбоксы */
+        QCheckBox {
+        spacing: 8px;
+        font-size: 13px;
+        }
+        QCheckBox::indicator {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #adb5bd;
+        border-radius: 4px;
+        }
+        QCheckBox::indicator:checked {
+        background-color: #007bff;
+        border-color: #007bff;
+        image: url(:/icons/check.svg);
+        }
+        QCheckBox::indicator:hover {
+        border-color: #6c757d;
+        }
+        QCheckBox:disabled {
+        color: #6c757d;
+        }
+        QCheckBox::indicator:disabled {
+        border-color: #dee2e6;
+        }
+
+        /* Спинбоксы и комбобоксы */
+        QSpinBox, QComboBox {
+        padding: 6px;
+        border: 1px solid #d1d9e6;
+        border-radius: 4px;
+        background-color: white;
+        min-height: 32px;
+        font-size: 13px;
+        }
+        QSpinBox:hover, QComboBox:hover {
+        border-color: #adb5bd;
+        }
+        QSpinBox:focus, QComboBox:focus {
+        border-color: #80bdff;
+        outline: 0;
+        box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+        QComboBox::drop-down {
+        border: none;
+        }
+        QComboBox::down-arrow {
+        image: url(:/icons/arrow-down.svg);
+        width: 12px;
+        height: 12px;
+        }
+
+        /* Статус VPN */
+        #vpnStatusFrame {
+        background-color: #f8f9fa;
+        border: 2px solid #007bff;
+        border-radius: 8px;
+        padding: 12px;
+        }
+        QLabel#vpnStatusLabel {
+        font-size: 14px;
+        font-weight: bold;
+        color: #2c3e50;
+        }
+        QLabel#vpnInfoLabel, QLabel#connectionTimeLabel {
+        font-size: 11px;
+        color: #6c757d;
+        }
+
+        /* Gateway группа */
+        #gatewayGroupBox {
+        background-color: #f8f9fa;
+        border: 2px solid #20c997;
+        }
+        #gatewayStatusLabel {
+        font-weight: bold;
+        font-size: 12px;
+        }
+        #gatewayInfoLabel, #gatewayHelpLabel {
+        font-size: 11px;
+        color: #6c757d;
+        }
+
+        /* Информация о сервере */
+        #infoText {
+        border: 1px solid #d1d9e6;
+        background-color: #f8f9fa;
+        font-size: 11px;
+        }
+
+        /* Области прокрутки */
+        QScrollBar:vertical {
+        border: none;
+        background: #f8f9fa;
+        width: 10px;
+        margin: 0;
+        }
+        QScrollBar::handle:vertical {
+        background: #adb5bd;
+        border-radius: 5px;
+        min-height: 20px;
+        }
+        QScrollBar::handle:vertical:hover {
+        background: #6c757d;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        border: none;
+        background: none;
+        }
+        QScrollBar:horizontal {
+        border: none;
+        background: #f8f9fa;
+        height: 10px;
+        margin: 0;
+        }
+        QScrollBar::handle:horizontal {
+        background: #adb5bd;
+        border-radius: 5px;
+        min-width: 20px;
+        }
+        QScrollBar::handle:horizontal:hover {
+        background: #6c757d;
+        }
+
+        /* Разделители */
+        QFrame[frameShape="4"] { /* HLine */
+        border: none;
+        border-top: 1px solid #dee2e6;
+        }
+        QFrame[frameShape="5"] { /* VLine */
+        border: none;
+        border-left: 1px solid #dee2e6;
+        }
+
+        /* Заголовок приложения */
+        QMainWindow::title {
+        background-color: #2c3e50;
+        color: white;
+        padding: 4px;
+        }</string>
+    </property>
+    <widget class="QWidget" name="centralwidget">
+      <layout class="QVBoxLayout" name="verticalLayout_11">
+        <item>
+          <layout class="QHBoxLayout" name="headerLayout">
+            <item>
+              <widget class="QLabel" name="titleLabel">
+                <property name="text">
+                  <string>🔒 VPNGate Manager Pro</string>
+                </property>
+                <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <spacer name="horizontalSpacer">
+                <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                  <size>
+                    <width>40</width>
+                    <height>20</height>
+                  </size>
+                </property>
+              </spacer>
+            </item>
+            <item>
+              <widget class="QPushButton" name="refreshButton">
+                <property name="text">
+                  <string>🔄 Обновить</string>
+                </property>
+                <property name="toolTip">
+                  <string>Загрузить актуальный список серверов VPNGate</string>
+                </property>
+                <property name="iconSize">
+                  <size>
+                    <width>16</width>
+                    <height>16</height>
+                  </size>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QPushButton" name="countryFilterButton">
+                <property name="text">
+                  <string>🌍 Фильтр</string>
+                </property>
+                <property name="toolTip">
+                  <string>Фильтрация и исключение стран</string>
+                </property>
+                <property name="iconSize">
+                  <size>
+                    <width>16</width>
+                    <height>16</height>
+                  </size>
+                </property>
+              </widget>
+            </item>
+          </layout>
+        </item>
+        <item>
+          <layout class="QHBoxLayout" name="toolsLayout">
+            <item>
+              <widget class="QPushButton" name="exportConfigButton">
+                <property name="text">
+                  <string>📤 Экспорт</string>
+                </property>
+                <property name="toolTip">
+                  <string>Экспортировать конфигурации для разных платформ</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QPushButton" name="shareVPNButton">
+                <property name="text">
+                  <string>🌐 Шлюз</string>
+                </property>
+                <property name="toolTip">
+                  <string>Запустить VPN Gateway для других устройств</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QPushButton" name="createGatewayConfigButton">
+                <property name="text">
+                  <string>📄 Конфиг</string>
+                </property>
+                <property name="toolTip">
+                  <string>Создать OVPN файл для подключения к шлюзу</string>
+                </property>
+                <property name="enabled">
+                  <bool>false</bool>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <spacer name="horizontalSpacer_5">
+                <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                  <size>
+                    <width>40</width>
+                    <height>20</height>
+                  </size>
+                </property>
+              </spacer>
+            </item>
+          </layout>
+        </item>
+        <item>
+          <layout class="QHBoxLayout" name="mainContentLayout">
+            <item>
+              <layout class="QVBoxLayout" name="leftPanelLayout">
                 <item>
-                    <widget class="QLabel" name="titleLabel">
-                        <property name="text">
-                            <string>VPNGate Manager - Проверка ВСЕХ серверов</string>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <layout class="QHBoxLayout" name="buttonLayout">
-                        <item>
-                            <widget class="QPushButton" name="refreshButton">
-                                <property name="text">
-                                    <string>🔄 Загрузить и проверить ВСЕ</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QPushButton" name="stopTestButton">
-                                <property name="text">
-                                    <string>⏹️ Остановить проверку</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QPushButton" name="testSelectedButton">
-                                <property name="text">
-                                    <string>🔍 Проверить снова</string>
-                                </property>
-                            </widget>
-                        </item>
-                    </layout>
-                </item>
-                <item>
-                    <layout class="QHBoxLayout" name="testProgressLayout">
-                        <item>
-                            <widget class="QLabel" name="label">
-                                <property name="text">
-                                    <string>Прогресс:</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QLabel" name="testProgressLabel">
-                                <property name="text">
-                                    <string>Ожидание...</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QProgressBar" name="testProgressBar"/>
-                        </item>
-                    </layout>
-                </item>
-                <item>
-                    <layout class="QHBoxLayout" name="statsLayout">
-                        <item>
-                            <widget class="QLabel" name="statsLabel">
-                                <property name="text">
-                                    <string>Статус: Ожидание</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QLabel" name="workingCountLabel">
-                                <property name="text">
-                                    <string>✅: 0</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QLabel" name="failedCountLabel">
-                                <property name="text">
-                                    <string>❌: 0</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QLabel" name="testedCountLabel">
-                                <property name="text">
-                                    <string>📊: 0/0</string>
-                                </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QLabel" name="countryCountLabel">
-                                <property name="text">
-                                    <string>🌍: 0 стран</string>
-                                </property>
-                            </widget>
-                        </item>
-                    </layout>
-                </item>
-                <item>
-                    <layout class="QHBoxLayout" name="vpnButtonLayout">
-                        <item>
+                  <widget class="QGroupBox" name="connectionGroupBox">
+                    <property name="title">
+                      <string>Подключение</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="verticalLayout_4">
+                      <item>
+                        <layout class="QHBoxLayout" name="connectionButtonsLayout">
+                          <item>
                             <widget class="QPushButton" name="connectButton">
-                                <property name="text">
-                                    <string>🔗 Подключиться</string>
-                                </property>
+                              <property name="sizePolicy">
+                                <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                                  <horstretch>0</horstretch>
+                                  <verstretch>0</verstretch>
+                                </sizepolicy>
+                              </property>
+                              <property name="text">
+                                <string>🔗 Подключиться</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Подключиться к выбранному серверу</string>
+                              </property>
                             </widget>
-                        </item>
-                        <item>
+                          </item>
+                          <item>
                             <widget class="QPushButton" name="disconnectButton">
-                                <property name="text">
-                                    <string>❌ Отключить</string>
-                                </property>
+                              <property name="sizePolicy">
+                                <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                                  <horstretch>0</horstretch>
+                                  <verstretch>0</verstretch>
+                                </sizepolicy>
+                              </property>
+                              <property name="text">
+                                <string>❌ Отключиться</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Разорвать текущее подключение</string>
+                              </property>
                             </widget>
-                        </item>
-                    </layout>
-                </item>
-                <item>
-                    <widget class="QFrame" name="vpnStatusFrame">
-                        <property name="frameShape">
-                            <enum>QFrame::StyledPanel</enum>
-                        </property>
-                        <layout class="QVBoxLayout" name="verticalLayout_2">
-                            <item>
-                                <widget class="QLabel" name="vpnStatusLabel">
-                                    <property name="text">
-                                        <string>VPN: ❌ Отключено</string>
-                                    </property>
-                                </widget>
-                            </item>
-                            <item>
-                                <widget class="QLabel" name="vpnInfoLabel">
-                                    <property name="text">
-                                        <string/>
-                                    </property>
-                                </widget>
-                            </item>
+                          </item>
                         </layout>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QLabel" name="label_2">
-                        <property name="text">
-                            <string>Лог тестирования:</string>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QTextEdit" name="testLogArea">
-                        <property name="maximumHeight">
-                            <number>200</number>
-                        </property>
-                        <property name="readOnly">
-                            <bool>true</bool>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QLabel" name="label_3">
-                        <property name="text">
-                            <string>Рабочие VPN серверы:</string>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QListWidget" name="serverList"/>
-                </item>
-                <item>
-                    <widget class="QLabel" name="label_4">
-                        <property name="text">
-                            <string>Информация о сервере:</string>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QTextEdit" name="infoText">
-                        <property name="maximumHeight">
-                            <number>100</number>
-                        </property>
-                        <property name="readOnly">
-                            <bool>true</bool>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <widget class="QProgressBar" name="progressBar"/>
-                </item>
-                <item>
-                    <widget class="QLabel" name="statusLabel">
-                        <property name="text">
-                            <string>Готово к работе</string>
-                        </property>
-                    </widget>
-                </item>
-                <item>
-                    <layout class="QHBoxLayout" name="logLayout">
-                        <item>
-                            <widget class="QLabel" name="label_5">
+                      </item>
+                      <item>
+                        <widget class="QFrame" name="vpnStatusFrame">
+                          <property name="frameShape">
+                            <enum>QFrame::StyledPanel</enum>
+                          </property>
+                          <property name="frameShadow">
+                            <enum>QFrame::Raised</enum>
+                          </property>
+                          <layout class="QVBoxLayout" name="verticalLayout_2">
+                            <item>
+                              <widget class="QLabel" name="vpnStatusLabel">
                                 <property name="text">
-                                    <string>Общий лог:</string>
+                                  <string>🔴 VPN: Отключено</string>
                                 </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QPushButton" name="clearLogButton">
+                                <property name="alignment">
+                                  <set>Qt::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="vpnInfoLabel">
                                 <property name="text">
-                                    <string>Очистить</string>
+                                  <string>Выберите сервер для подключения</string>
                                 </property>
-                            </widget>
-                        </item>
-                        <item>
-                            <widget class="QPushButton" name="saveLogButton">
+                                <property name="alignment">
+                                  <set>Qt::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="connectionTimeLabel">
                                 <property name="text">
-                                    <string>Сохранить</string>
+                                  <string>Время: 00:00</string>
                                 </property>
-                            </widget>
-                        </item>
+                                <property name="alignment">
+                                  <set>Qt::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </widget>
+                      </item>
                     </layout>
+                  </widget>
                 </item>
                 <item>
-                    <widget class="QTextEdit" name="logArea">
-                        <property name="maximumHeight">
-                            <number>120</number>
-                        </property>
-                        <property name="readOnly">
-                            <bool>true</bool>
-                        </property>
-                    </widget>
+                  <widget class="QGroupBox" name="settingsGroupBox">
+                    <property name="title">
+                      <string>Настройки</string>
+                    </property>
+                    <layout class="QGridLayout" name="gridLayout">
+                      <item row="0" column="0" colspan="2">
+                        <widget class="QCheckBox" name="autoReconnectCheckbox">
+                          <property name="text">
+                            <string>Авто-подключение</string>
+                          </property>
+                          <property name="toolTip">
+                            <string>Автоматически переподключаться при разрыве соединения</string>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="1" column="0">
+                        <widget class="QLabel" name="timeoutLabel">
+                          <property name="text">
+                            <string>Таймаут:</string>
+                          </property>
+                          <property name="alignment">
+                            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="1" column="1">
+                        <widget class="QSpinBox" name="timeoutSpinBox">
+                          <property name="enabled">
+                            <bool>false</bool>
+                          </property>
+                          <property name="suffix">
+                            <string> сек</string>
+                          </property>
+                          <property name="minimum">
+                            <number>10</number>
+                          </property>
+                          <property name="maximum">
+                            <number>180</number>
+                          </property>
+                          <property name="value">
+                            <number>45</number>
+                          </property>
+                          <property name="toolTip">
+                            <string>Время ожидания подключения к серверу</string>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="2" column="0" colspan="2">
+                        <widget class="QCheckBox" name="autoRefreshCheckbox">
+                          <property name="text">
+                            <string>Авто-обновление</string>
+                          </property>
+                          <property name="toolTip">
+                            <string>Периодически обновлять список серверов</string>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="3" column="0">
+                        <widget class="QLabel" name="refreshIntervalLabel">
+                          <property name="text">
+                            <string>Интервал:</string>
+                          </property>
+                          <property name="alignment">
+                            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="3" column="1">
+                        <widget class="QSpinBox" name="autoRefreshIntervalSpinBox">
+                          <property name="enabled">
+                            <bool>false</bool>
+                          </property>
+                          <property name="suffix">
+                            <string> мин</string>
+                          </property>
+                          <property name="minimum">
+                            <number>5</number>
+                          </property>
+                          <property name="maximum">
+                            <number>360</number>
+                          </property>
+                          <property name="value">
+                            <number>30</number>
+                          </property>
+                          <property name="toolTip">
+                            <string>Интервал автоматического обновления</string>
+                          </property>
+                        </widget>
+                      </item>
+                      <item row="4" column="0" colspan="2">
+                        <widget class="QPushButton" name="resetFailedButton">
+                          <property name="text">
+                            <string>🗑️ Сбросить</string>
+                          </property>
+                          <property name="toolTip">
+                            <string>Очистить список недоступных серверов</string>
+                          </property>
+                        </widget>
+                      </item>
+                    </layout>
+                  </widget>
                 </item>
-            </layout>
-        </widget>
+                <item>
+                  <widget class="QGroupBox" name="gatewayGroupBox">
+                    <property name="title">
+                      <string>VPN Gateway</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="verticalLayout_10">
+                      <item>
+                        <layout class="QHBoxLayout" name="gatewayControlsLayout">
+                          <item>
+                            <widget class="QPushButton" name="gatewayStartButton">
+                              <property name="text">
+                                <string>▶️ Запустить</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Запустить VPN Gateway для других устройств</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="gatewayStopButton">
+                              <property name="text">
+                                <string>⏹️ Остановить</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Остановить VPN Gateway</string>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                      <item>
+                        <widget class="QLabel" name="gatewayStatusLabel">
+                          <property name="text">
+                            <string>Статус: Неактивен</string>
+                          </property>
+                        </widget>
+                      </item>
+                      <item>
+                        <widget class="QLabel" name="gatewayInfoLabel">
+                          <property name="text">
+                            <string>IP: Не определен</string>
+                          </property>
+                        </widget>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QGroupBox" name="serverInfoGroupBox">
+                    <property name="title">
+                      <string>Информация о сервере</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="verticalLayout_5">
+                      <item>
+                        <widget class="QTextEdit" name="infoText">
+                          <property name="readOnly">
+                            <bool>true</bool>
+                          </property>
+                          <property name="html">
+                            <string>&lt;div style='text-align: center; padding: 20px; color: #6c757d;'&gt;
+                              👆 Выберите сервер из списка
+                              &lt;/div&gt;</string>
+                          </property>
+                        </widget>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+              </layout>
+            </item>
+            <item>
+              <layout class="QVBoxLayout" name="rightPanelLayout">
+                <item>
+                  <widget class="QGroupBox" name="serversGroupBox">
+                    <property name="title">
+                      <string>Серверы</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="verticalLayout_6">
+                      <item>
+                        <layout class="QHBoxLayout" name="statsLayout">
+                          <item>
+                            <widget class="QLabel" name="statsLabel">
+                              <property name="text">
+                                <string>Загружено: 0</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QLabel" name="workingCountLabel">
+                              <property name="text">
+                                <string>✅ 0</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QLabel" name="countryCountLabel">
+                              <property name="text">
+                                <string>🌍 0</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QLabel" name="failedCountLabel">
+                              <property name="text">
+                                <string>❌ 0</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <spacer name="horizontalSpacer_2">
+                              <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                              </property>
+                              <property name="sizeHint" stdset="0">
+                                <size>
+                                  <width>40</width>
+                                  <height>20</height>
+                                </size>
+                              </property>
+                            </spacer>
+                          </item>
+                          <item>
+                            <widget class="QLabel" name="statusLabel">
+                              <property name="text">
+                                <string>Готово</string>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                      <item>
+                        <widget class="QListWidget" name="serverList">
+                          <property name="selectionMode">
+                            <enum>QAbstractItemView::SingleSelection</enum>
+                          </property>
+                        </widget>
+                      </item>
+                      <item>
+                        <layout class="QHBoxLayout" name="sortLayout">
+                          <item>
+                            <widget class="QLabel" name="sortLabel">
+                              <property name="text">
+                                <string>Сортировка:</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="sortBySpeedButton">
+                              <property name="text">
+                                <string>⚡ Скорость</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Сортировать по скорости (по убыванию)</string>
+                              </property>
+                              <property name="checkable">
+                                <bool>true</bool>
+                              </property>
+                              <property name="checked">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="sortByPingButton">
+                              <property name="text">
+                                <string>⏱️ Пинг</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Сортировать по пингу (по возрастанию)</string>
+                              </property>
+                              <property name="checkable">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="sortByCountryButton">
+                              <property name="text">
+                                <string>🌍 Страна</string>
+                              </property>
+                              <property name="toolTip">
+                                <string>Сортировать по названию страны</string>
+                              </property>
+                              <property name="checkable">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QGroupBox" name="progressGroupBox">
+                    <property name="title">
+                      <string>Прогресс</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="verticalLayout_7">
+                      <item>
+                        <widget class="QProgressBar" name="progressBar">
+                          <property name="value">
+                            <number>0</number>
+                          </property>
+                          <property name="format">
+                            <string>%p%</string>
+                          </property>
+                        </widget>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QTabWidget" name="tabWidget">
+                    <property name="currentIndex">
+                      <number>0</number>
+                    </property>
+                    <widget class="QWidget" name="downloadLogTab">
+                      <attribute name="title">
+                        <string>Лог загрузки</string>
+                      </attribute>
+                      <layout class="QVBoxLayout" name="verticalLayout_8">
+                        <item>
+                          <widget class="QTextEdit" name="testLogArea">
+                            <property name="readOnly">
+                              <bool>true</bool>
+                            </property>
+                            <property name="placeholderText">
+                              <string>Лог загрузки серверов...</string>
+                            </property>
+                          </widget>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="mainLogTab">
+                      <attribute name="title">
+                        <string>Общий лог</string>
+                      </attribute>
+                      <layout class="QVBoxLayout" name="verticalLayout_9">
+                        <item>
+                          <layout class="QHBoxLayout" name="logButtonsLayout">
+                            <item>
+                              <widget class="QPushButton" name="clearLogButton">
+                                <property name="text">
+                                  <string>🗑️ Очистить</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="saveLogButton">
+                                <property name="text">
+                                  <string>💾 Сохранить</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <spacer name="horizontalSpacer_3">
+                                <property name="orientation">
+                                  <enum>Qt::Horizontal</enum>
+                                </property>
+                                <property name="sizeHint" stdset="0">
+                                  <size>
+                                    <width>40</width>
+                                    <height>20</height>
+                                  </size>
+                                </property>
+                              </spacer>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="logCounterLabel">
+                                <property name="text">
+                                  <string>0</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                        <item>
+                          <widget class="QTextEdit" name="logArea">
+                            <property name="readOnly">
+                              <bool>true</bool>
+                            </property>
+                            <property name="placeholderText">
+                              <string>Общий лог приложения...</string>
+                            </property>
+                          </widget>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="quickConnectTab">
+                      <attribute name="title">
+                        <string>Быстрое подключение</string>
+                      </attribute>
+                      <layout class="QVBoxLayout" name="verticalLayout_12">
+                        <item>
+                          <widget class="QLabel" name="quickConnectLabel">
+                            <property name="text">
+                              <string>Автоматическое подключение:</string>
+                            </property>
+                            <property name="alignment">
+                              <set>Qt::AlignCenter</set>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QHBoxLayout" name="quickConnectLayout">
+                            <item>
+                              <widget class="QPushButton" name="quickConnectFastButton">
+                                <property name="text">
+                                  <string>⚡ Быстрый</string>
+                                </property>
+                                <property name="toolTip">
+                                  <string>Подключиться к серверу с максимальной скоростью</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="quickConnectStableButton">
+                                <property name="text">
+                                  <string>🛡️ Стабильный</string>
+                                </property>
+                                <property name="toolTip">
+                                  <string>Подключиться к серверу с лучшим аптаймом</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="quickConnectRandomButton">
+                                <property name="text">
+                                  <string>🎲 Случайный</string>
+                                </property>
+                                <property name="toolTip">
+                                  <string>Подключиться к случайному серверу</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                      </layout>
+                    </widget>
+                  </widget>
+                </item>
+              </layout>
+            </item>
+          </layout>
+        </item>
+      </layout>
     </widget>
-    <resources/>
-    <connections/>
+  </widget>
+  <resources/>
+  <connections/>
 </ui>
