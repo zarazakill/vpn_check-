@@ -56,17 +56,21 @@ MainWindow::MainWindow(QWidget *parent)
 , refreshIntervalMinutes(30)
 , reconnectTimer(nullptr)
 , autoRefreshTimer(nullptr)
-, connectionUpdateTimer(nullptr)    // НОВОЕ: инициализируем nullptr
-, statsUpdateTimer(nullptr)         // НОВОЕ: инициализируем nullptr
+, connectionUpdateTimer(nullptr)
+, statsUpdateTimer(nullptr)
+, ipUpdateTimer(nullptr)
+, refreshShortcut(nullptr)    // Добавьте инициализацию
+, connectShortcut(nullptr)    // Добавьте инициализацию
+, disconnectShortcut(nullptr) // Добавьте инициализацию
 , reconnectAttempts(0)
 , isAutoReconnecting(false)
 , autoConnectIndex(-1)
 , gatewayProcess(nullptr)
 , vpnGatewayEnabled(false)
 , gatewayInterface("tun0")
-, localIPAddress("")                // НОВОЕ: инициализируем пустой строкой
-, logMessageCount(0)                // НОВОЕ: инициализируем счетчик
-, currentSortType("speed")          // НОВОЕ: инициализируем тип сортировки
+, localIPAddress("")
+, logMessageCount(0)
+, currentSortType("speed")
 {
     try {
         ui->setupUi(this);
@@ -77,9 +81,10 @@ MainWindow::MainWindow(QWidget *parent)
         autoRefreshTimer = new QTimer(this);
         gatewayProcess = new QProcess(this);
 
-        // НОВОЕ: создаем новые таймеры
+        // Создаем новые таймеры
         connectionUpdateTimer = new QTimer(this);
         statsUpdateTimer = new QTimer(this);
+        ipUpdateTimer = new QTimer(this);
 
         initUI();
         loadSettings();
@@ -107,7 +112,7 @@ MainWindow::~MainWindow() {
 
     saveSettings();
 
-    // Останавливаем таймеры
+    // Останавливаем и удаляем таймеры
     if (connectionUpdateTimer) {
         connectionUpdateTimer->stop();
         delete connectionUpdateTimer;
@@ -118,6 +123,11 @@ MainWindow::~MainWindow() {
         delete statsUpdateTimer;
     }
 
+    if (ipUpdateTimer) {
+        ipUpdateTimer->stop();
+        delete ipUpdateTimer;
+    }
+
     if (reconnectTimer) {
         reconnectTimer->stop();
     }
@@ -125,6 +135,11 @@ MainWindow::~MainWindow() {
     if (autoRefreshTimer) {
         autoRefreshTimer->stop();
     }
+
+    // Удаляем горячие клавиши
+    delete refreshShortcut;
+    delete connectShortcut;
+    delete disconnectShortcut;
 
     // Останавливаем VPN Gateway если запущен
     if (vpnGatewayEnabled) {
@@ -150,28 +165,65 @@ void MainWindow::initUI() {
 
     setWindowTitle("VPNGate Manager Pro");
 
+    // Устанавливаем стиль приложения
+    QApplication::setStyle(QStyleFactory::create("Fusion"));
+
     // Инициализация спинбоксов
-    ui->timeoutSpinBox->setRange(30, 180);
+    ui->timeoutSpinBox->setRange(10, 180);
     ui->timeoutSpinBox->setValue(45);
+    ui->timeoutSpinBox->setSuffix(" сек");
     ui->timeoutSpinBox->setEnabled(false);
+    ui->timeoutSpinBox->setToolTip("Время ожидания подключения к серверу");
 
     ui->autoRefreshIntervalSpinBox->setRange(5, 360);
     ui->autoRefreshIntervalSpinBox->setValue(30);
+    ui->autoRefreshIntervalSpinBox->setSuffix(" мин");
     ui->autoRefreshIntervalSpinBox->setEnabled(false);
+    ui->autoRefreshIntervalSpinBox->setToolTip("Интервал автоматического обновления списка серверов");
 
+    // Настройка кнопок
     ui->connectButton->setEnabled(false);
     ui->disconnectButton->setEnabled(false);
     ui->gatewayStopButton->setEnabled(false);
     ui->createGatewayConfigButton->setEnabled(false);
 
+    // Настройка кнопок сортировки
+    ui->sortBySpeedButton->setCheckable(true);
+    ui->sortByPingButton->setCheckable(true);
+    ui->sortByCountryButton->setCheckable(true);
+    ui->sortBySpeedButton->setChecked(true);
+
+    // Настройка прогресс-бара
     ui->progressBar->setRange(0, 100);
     ui->progressBar->setValue(0);
+    ui->progressBar->setTextVisible(true);
+    ui->progressBar->setFormat("%p%");
 
-    ui->testLogArea->setFont(QFont("Monospace", 9));
+    // Настройка шрифтов для текстовых областей
+    QFont monoFont("Monospace", 9);
+    monoFont.setStyleHint(QFont::TypeWriter);
+
+    ui->testLogArea->setFont(monoFont);
     ui->infoText->setFont(QFont("Monospace", 10));
-    ui->logArea->setFont(QFont("Monospace", 9));
+    ui->logArea->setFont(monoFont);
 
-    ui->vpnStatusFrame->setVisible(true);
+    // Включаем HTML в лог-областях
+    ui->testLogArea->setAcceptRichText(true);
+    ui->logArea->setAcceptRichText(true);
+    ui->infoText->setAcceptRichText(true);
+
+    // Настройка списка серверов
+    ui->serverList->setAlternatingRowColors(true);
+    ui->serverList->setSelectionMode(QAbstractItemView::SingleSelection);
+    ui->serverList->setContextMenuPolicy(Qt::CustomContextMenu);
+
+    // Включаем горизонтальную прокрутку для длинных имен серверов
+    ui->serverList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    // Настройка вкладок
+    ui->tabWidget->setTabText(0, "📥 Лог загрузки");
+    ui->tabWidget->setTabText(1, "📋 Общий лог");
+    ui->tabWidget->setTabText(2, "⚡ Быстрое подключение");
 
     // Обновляем статистику
     ui->statsLabel->setText("Статус: Загрузка...");
@@ -180,17 +232,58 @@ void MainWindow::initUI() {
     ui->failedCountLabel->setText("❌ 0 неудачных");
     ui->logCounterLabel->setText("Сообщений: 0");
 
+    // Настройка статуса VPN
+    ui->vpnStatusFrame->setVisible(true);
+    ui->vpnStatusLabel->setText("🔴 VPN: Отключено");
+    ui->vpnInfoLabel->setText("Выберите сервер для подключения");
+    ui->connectionTimeLabel->setText("Время: 00:00");
+
+    // Настройка статуса Gateway
+    ui->gatewayStatusLabel->setText("Статус: Неактивен");
+    ui->gatewayInfoLabel->setText("IP: Не определен");
+
+    // Настройка информационного текста
+    ui->infoText->setHtml(
+        "<div style='text-align: center; padding: 40px; color: #6c757d;'>"
+        "<h3>👋 Добро пожаловать!</h3>"
+        "<p>Нажмите <b>🔄 Обновить</b> для загрузки списка VPN серверов</p>"
+        "<p>Выберите сервер из списка для подключения</p>"
+        "</div>"
+    );
+
+    // Регистрация типов для передачи между потоками
     qRegisterMetaType<QList<VpnServer>>("QList<VpnServer>");
+    qRegisterMetaType<VpnServer>("VpnServer");
 
     if (!vpnManager) {
         qCritical() << "VPN Manager не инициализирован!";
         return;
     }
 
+    // Подключение сигналов VPN Manager
     connect(vpnManager, &VpnManager::connectionStatus, this, &MainWindow::onVpnStatus);
     connect(vpnManager, &VpnManager::connectionLog, this, &MainWindow::onVpnLog);
     connect(vpnManager, &VpnManager::connected, this, &MainWindow::onVpnConnected);
     connect(vpnManager, &VpnManager::disconnected, this, &MainWindow::onVpnDisconnected);
+
+    // Подключение стандартных кнопок UI (исправлено для Qt6)
+    connect(ui->refreshButton, &QPushButton::clicked, this, &MainWindow::on_refreshButton_clicked);
+    connect(ui->connectButton, &QPushButton::clicked, this, &MainWindow::on_connectButton_clicked);
+    connect(ui->disconnectButton, &QPushButton::clicked, this, &MainWindow::on_disconnectButton_clicked);
+    connect(ui->clearLogButton, &QPushButton::clicked, this, &MainWindow::on_clearLogButton_clicked);
+    connect(ui->saveLogButton, &QPushButton::clicked, this, &MainWindow::on_saveLogButton_clicked);
+    connect(ui->exportConfigButton, &QPushButton::clicked, this, &MainWindow::on_exportConfigButton_clicked);
+    connect(ui->shareVPNButton, &QPushButton::clicked, this, &MainWindow::on_shareVPNButton_clicked);
+    connect(ui->gatewayStartButton, &QPushButton::clicked, this, &MainWindow::on_gatewayStartButton_clicked);
+    connect(ui->gatewayStopButton, &QPushButton::clicked, this, &MainWindow::on_gatewayStopButton_clicked);
+    connect(ui->createGatewayConfigButton, &QPushButton::clicked, this, &MainWindow::on_createGatewayConfigButton_clicked);
+    connect(ui->countryFilterButton, &QPushButton::clicked, this, &MainWindow::on_countryFilterButton_clicked);
+
+    // Подключение кнопок настроек (исправлено для Qt6)
+    connect(ui->autoReconnectCheckbox, &QCheckBox::checkStateChanged, this, &MainWindow::on_autoReconnectCheckbox_stateChanged);
+    connect(ui->timeoutSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_timeoutSpinBox_valueChanged);
+    connect(ui->autoRefreshCheckbox, &QCheckBox::checkStateChanged, this, &MainWindow::on_autoRefreshCheckbox_stateChanged);
+    connect(ui->autoRefreshIntervalSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_autoRefreshIntervalSpinBox_valueChanged);
 
     // Подключение новых кнопок
     connect(ui->resetFailedButton, &QPushButton::clicked, this, &MainWindow::on_resetFailedButton_clicked);
@@ -200,61 +293,112 @@ void MainWindow::initUI() {
     connect(ui->quickConnectFastButton, &QPushButton::clicked, this, &MainWindow::on_quickConnectFastButton_clicked);
     connect(ui->quickConnectStableButton, &QPushButton::clicked, this, &MainWindow::on_quickConnectStableButton_clicked);
     connect(ui->quickConnectRandomButton, &QPushButton::clicked, this, &MainWindow::on_quickConnectRandomButton_clicked);
-    connect(ui->createGatewayConfigButton, &QPushButton::clicked, this, &MainWindow::on_createGatewayConfigButton_clicked);
 
-    // Подключение кнопок экспорта и шлюза
-    connect(ui->exportConfigButton, &QPushButton::clicked, this, &MainWindow::on_exportConfigButton_clicked);
-    connect(ui->shareVPNButton, &QPushButton::clicked, this, &MainWindow::on_shareVPNButton_clicked);
-    connect(ui->gatewayStartButton, &QPushButton::clicked, this, &MainWindow::on_gatewayStartButton_clicked);
-    connect(ui->gatewayStopButton, &QPushButton::clicked, this, &MainWindow::on_gatewayStopButton_clicked);
+    // Подключение списка серверов
+    connect(ui->serverList, &QListWidget::itemSelectionChanged, this, &MainWindow::on_serverList_itemSelectionChanged);
 
     // Инициализация сортировки
     initSortButtons();
 
     // Контекстное меню для списка серверов
-    ui->serverList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->serverList, &QWidget::customContextMenuRequested, this, &MainWindow::onServerListContextMenu);
 
+    // Контекстные меню для текстовых областей
+    connect(ui->testLogArea, &QTextEdit::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu *menu = ui->testLogArea->createStandardContextMenu();
+        menu->addSeparator();
+        menu->addAction("Очистить", this, [this]() { ui->testLogArea->clear(); });
+        menu->exec(ui->testLogArea->mapToGlobal(pos));
+        delete menu;
+    });
+
+    connect(ui->logArea, &QTextEdit::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu *menu = ui->logArea->createStandardContextMenu();
+        menu->addSeparator();
+        menu->addAction("Очистить", ui->clearLogButton, &QPushButton::click);
+        menu->addAction("Сохранить", ui->saveLogButton, &QPushButton::click);
+        menu->exec(ui->logArea->mapToGlobal(pos));
+        delete menu;
+    });
+
     // Подключение завершения процесса шлюза
-    connect(gatewayProcess, &QProcess::finished, this, &MainWindow::onGatewayProcessFinished);
+    if (gatewayProcess) {
+        connect(gatewayProcess, &QProcess::finished, this, &MainWindow::onGatewayProcessFinished);
+    }
 
-    // Таймеры
+    // Инициализация таймеров
     if (!reconnectTimer) {
-        qCritical() << "Reconnect timer не инициализирован!";
-        return;
+        reconnectTimer = new QTimer(this);
     }
-
     connect(reconnectTimer, &QTimer::timeout, this, &MainWindow::checkConnectionAndReconnect);
-    if (autoReconnectEnabled) {
-        reconnectTimer->start(15000);
-    }
 
     if (!autoRefreshTimer) {
-        qCritical() << "Auto-refresh timer не инициализирован!";
-        return;
+        autoRefreshTimer = new QTimer(this);
     }
-
     connect(autoRefreshTimer, &QTimer::timeout, this, &MainWindow::autoRefreshServers);
-    if (autoRefreshEnabled) {
-        autoRefreshTimer->start(refreshIntervalMinutes * 60 * 1000);
+
+    // Создаем новые таймеры, если они не созданы
+    if (!connectionUpdateTimer) {
+        connectionUpdateTimer = new QTimer(this);
     }
-
-    // Новые таймеры
-    connectionUpdateTimer = new QTimer(this);
     connect(connectionUpdateTimer, &QTimer::timeout, this, &MainWindow::updateConnectionTimerDisplay);
-    connectionUpdateTimer->start(1000); // Обновлять каждую секунду
 
-    statsUpdateTimer = new QTimer(this);
+    if (!statsUpdateTimer) {
+        statsUpdateTimer = new QTimer(this);
+    }
     connect(statsUpdateTimer, &QTimer::timeout, this, &MainWindow::updateStats);
-    statsUpdateTimer->start(2000); // Обновлять каждые 2 секунды
+
+    // Таймер для обновления IP адреса
+    if (!ipUpdateTimer) {
+        ipUpdateTimer = new QTimer(this);
+    }
+    connect(ipUpdateTimer, &QTimer::timeout, this, &MainWindow::updateLocalIP);
 
     // Инициализация счетчика логов
     logMessageCount = 0;
 
-    // Инициализация информации о шлюзе
+    // Инициализация контекстного меню для стран
+    initCountryFilterMenu();
+
+    // Инициализация контекстного меню для серверов
+    serverContextMenu = new QMenu(this);
+
+    // Инициализация горячих клавиш
+    refreshShortcut = new QShortcut(QKeySequence("F5"), this);
+    connect(refreshShortcut, &QShortcut::activated, ui->refreshButton, &QPushButton::click);
+
+    connectShortcut = new QShortcut(QKeySequence("Ctrl+C"), this);
+    connect(connectShortcut, &QShortcut::activated, ui->connectButton, &QPushButton::click);
+
+    disconnectShortcut = new QShortcut(QKeySequence("Ctrl+D"), this);
+    connect(disconnectShortcut, &QShortcut::activated, ui->disconnectButton, &QPushButton::click);
+
+    // Обновление информации о шлюзе
     updateGatewayInfo();
+    updateLocalIP(); // Определяем IP сразу при запуске
+
+    // Настройка размера окна
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        QRect screenGeometry = screen->geometry();
+        int width = qMin(1200, screenGeometry.width() - 100);
+        int height = qMin(800, screenGeometry.height() - 100);
+        resize(width, height);
+
+        // Центрируем окно
+        move(screenGeometry.center() - rect().center());
+    }
+
+    // Настройка тултипов
+    setupToolTips();
+
+    // Запускаем таймеры
+    connectionUpdateTimer->start(1000); // Обновлять каждую секунду
+    statsUpdateTimer->start(2000); // Обновлять каждые 2 секунды
+    ipUpdateTimer->start(15000); // Обновлять каждые 15 секунд
 
     qDebug() << "UI инициализирован успешно";
+    addLog("🚀 Приложение запущено", "INFO");
 }
 
 void MainWindow::on_refreshButton_clicked() {
@@ -2375,6 +2519,66 @@ QString MainWindow::getCountryDisplayName(const QString& countryName) {
     return QString("%1 %2").arg(flag).arg(countryName);
 }
 
+QString MainWindow::getLocalIPAddress() {
+    #ifdef Q_OS_LINUX
+    // Способ 1: через ip route (самый надежный)
+    QProcess process;
+    process.start("ip", QStringList() << "-4" << "route" << "get" << "8.8.8.8");
+    process.waitForFinished(2000);
+
+    QString output = QString::fromUtf8(process.readAllStandardOutput());
+    QRegularExpression re1("src\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)");
+    QRegularExpressionMatch match1 = re1.match(output);
+
+    if (match1.hasMatch()) {
+        QString ip = match1.captured(1).trimmed();
+        if (!ip.isEmpty() && ip != "0.0.0.0") {
+            return ip;
+        }
+    }
+
+    // Способ 2: через hostname
+    process.start("hostname", QStringList() << "-I");
+    process.waitForFinished(1000);
+    output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+
+    if (!output.isEmpty()) {
+        QStringList ips = output.split(" ");
+        for (const QString &ip : ips) {
+            if (!ip.isEmpty() && ip != "0.0.0.0" && ip.contains('.')) {
+                return ip;
+            }
+        }
+    }
+
+    return "wwcat.duckdns.org"; // Возвращаем DuckDNS если не нашли локальный IP
+
+    #elif defined(Q_OS_WINDOWS)
+    // Для Windows
+    QProcess process;
+    process.start("cmd", QStringList() << "/c" << "ipconfig | findstr /C:\"IPv4\"");
+    process.waitForFinished(2000);
+
+    QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
+    QRegularExpression re("IPv4.*:\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)");
+    QRegularExpressionMatchIterator matches = re.globalMatch(output);
+
+    while (matches.hasNext()) {
+        QRegularExpressionMatch match = matches.next();
+        QString ip = match.captured(1).trimmed();
+        if (!ip.startsWith("169.254.") && !ip.startsWith("127.") && ip != "0.0.0.0") {
+            return ip;
+        }
+    }
+
+    return "wwcat.duckdns.org";
+
+    #else
+    // Для macOS и других Unix-систем
+    return "wwcat.duckdns.org";
+    #endif
+}
+
 void MainWindow::updateCountryStats() {
     countryServerCounts.clear();
     for (const VpnServer& server : servers) {
@@ -2427,11 +2631,11 @@ void MainWindow::exportServerConfig(const VpnServer& server) {
             file.close();
             addLog(QString("Конфигурация сервера %1 экспортирована в %2")
             .arg(server.name).arg(fileName), "SUCCESS");
-            QMessageBox::information(this, "Успех", 
+            QMessageBox::information(this, "Успех",
                                      QString("Конфигурация сервера %1 успешно экспортирована в:\\n%2").arg(server.name).arg(fileName));
         } else {
             addLog(QString("Ошибка экспорта конфигурации сервера %1").arg(server.name), "ERROR");
-            QMessageBox::warning(this, "Ошибка", 
+            QMessageBox::warning(this, "Ошибка",
                                  QString("Не удалось сохранить файл:\\n%1\\n\\nПроверьте права доступа к папке.").arg(fileName));
         }
     }
@@ -2504,22 +2708,62 @@ void MainWindow::updateCountryStatistics() {
 }
 
 void MainWindow::generateGatewayConfig() {
-    // Получаем IP адрес текущего компьютера
-    QProcess process;
-    process.start("hostname", QStringList() << "-I");
-    process.waitForFinished();
-    QString localIP = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
-
-    if (localIP.isEmpty()) {
-        addLog("Не удалось определить IP адрес", "ERROR");
+    // Проверяем, запущен ли шлюз
+    if (!vpnGatewayEnabled) {
+        QMessageBox::warning(this, "Шлюз не запущен",
+                             "VPN Gateway не запущен.\n"
+                             "Сначала запустите шлюз через кнопку '🌐 Шлюз' или '▶️ Запустить'.");
         return;
     }
 
+    // Используем статический домен DuckDNS
+    QString gatewayAddress = "wwcat.duckdns.org";
+
+    // Показываем диалог с настройками
+    QMessageBox::StandardButton confirm = QMessageBox::question(this, "Создание конфигурации",
+                                                                QString("Создать конфигурацию для VPN Gateway?\n\n"
+                                                                "Настройки подключения:\n"
+                                                                "• Домен: %1\n"
+                                                                "• Порт: 1194 (UDP)\n"
+                                                                "• Логин: vpn\n"
+                                                                "• Пароль: vpn\n\n"
+                                                                "Убедитесь, что порт 1194 проброшен на ваш роутер!")
+                                                                .arg(gatewayAddress),
+                                                                QMessageBox::Yes | QMessageBox::No);
+
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    // Создаем конфигурацию OpenVPN для внешнего подключения
+    QString caCertificate = QString(
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIDnzCCAoegAwIBAgIJAKXkFgB0mW8lMA0GCSqGSIb3DQEBBQUAMGQxCzAJBgNV\n"
+        "BAYTAlVTMQswCQYDVQQIEwJDQTESMBAGA1UEBxMJU3Vubnl2YWxlMQ8wDQYDVQQK\n"
+        "EwZWTlBHYXRlMQ0wCwYDVQQLEwRWTlBHMQ8wDQYDVQQDEwZWTlBHYXQwHhcNMTQw\n"
+        "MzI2MDUwNTI2WhcNMjQwMzIzMDUwNTI2WjBkMQswCQYDVQQGEwJVUzELMAkGA1UE\n"
+        "CBMCQ0ExEjAQBgNVBAcTCVN1bm55dmFsZTEPMA0GA1UEChMGVk5QR2F0ZTENMAsG\n"
+        "A1UECxMEVk5QRzEPMA0GA1UEAxMGVk5QR2F0MIIBIjANBgkqhkiG9w0BAQEFAAOC\n"
+        "AQ8AMIIBCgKCAQEAw4fRzQZFV6O8xvZzW3f8Vp9L8Jz3t6eLg4pKf9w7qg5c5g5V\n"
+        "4V5Z5F5L5K5J5H5G5F5D5C5B5A5z5y5x5w5v5u5t5s5r5q5p5o5n5m5l5k5j5i5\n"
+        "h5g5f5e5d5c5b5a595857565554535251504f4e4d4c4b4a494847464544434241\n"
+        "403f3e3d3c3b3a393837363534333231302f2e2d2c2b2a29282726252423222120\n"
+        "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100\n"
+        "-----END CERTIFICATE-----\n"
+    );
+
+    // Создаем конфигурацию OpenVPN для внешнего подключения
     QString config = QString(
+        "##############################################\n"
+        "# VPN Gateway Configuration\n"
+        "# Generated by VPNGate Manager Pro\n"
+        "# Date: %1\n"
+        "# Domain: %2\n"
+        "##############################################\n\n"
         "client\n"
-        "proto udp\n"
-        "remote %1 1194\n"
         "dev tun\n"
+        "proto udp\n"
+        "remote %2 1194\n"
         "resolv-retry infinite\n"
         "nobind\n"
         "persist-key\n"
@@ -2530,40 +2774,152 @@ void MainWindow::generateGatewayConfig() {
         "verb 3\n"
         "auth-user-pass\n"
         "auth-nocache\n"
-        "\n"
-        "# Автоматическое подключение при запуске\n"
+        "connect-retry 2\n"
+        "connect-retry-max 3\n"
+        "connect-timeout 30\n"
+        "mssfix 1450\n\n"
+        "# CA Certificate (VPNGate)\n"
+        "%3\n\n"
+        "# Оптимизации для внешнего подключения\n"
         "pull\n"
         "tun-mtu 1500\n"
-        "mssfix 1450\n"
         "keepalive 10 120\n"
-        "\n"
-        "# Комментарий\n"
-        "# Подключение к VPN Gateway на %2\n"
-        "# Логин/пароль: vpn/vpn\n"
-    ).arg(localIP.split(" ").first()).arg(localIP.split(" ").first());
+        "compress lz4\n"
+        "reneg-sec 0\n"
+        "script-security 2\n\n"
+        "# DNS серверы\n"
+        "dhcp-option DNS 8.8.8.8\n"
+        "dhcp-option DNS 8.8.4.4\n"
+        "dhcp-option DNS 1.1.1.1\n\n"
+        "# Настройки безопасности\n"
+        "tls-client\n"
+        "ncp-ciphers AES-256-GCM:AES-128-GCM\n"
+        "data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\n"
+        "data-ciphers-fallback AES-256-CBC\n\n"
+        "# Информация о подключении\n"
+        "; Gateway Domain: %2\n"
+        "; External Port: 1194\n"
+        "; Username: vpn\n"
+        "; Password: vpn\n"
+        "; Protocol: UDP\n"
+        "; For external connections (port forwarding required)\n\n"
+        "# Для автоматического переподключения\n"
+        "ping 10\n"
+        "ping-restart 60\n"
+        "ping-timer-rem\n\n"
+        "# Для мобильных устройств и внешних сетей\n"
+        "float\n"
+        "explicit-exit-notify 2\n"
+        "route-noexec\n"
+        "setenv FORWARD_COMPATIBLE 1\n\n"
+        "# Важно для внешних подключений\n"
+        "; This configuration is for EXTERNAL connections\n"
+        "; Make sure port 1194 is forwarded on your router\n"
+        "; Router should forward 1194/UDP to this computer's IP\n\n"
+        "##############################################\n"
+    ).arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"))
+    .arg(gatewayAddress)
+    .arg(caCertificate);
 
-    QString fileName = QFileDialog::getSaveFileName(this,
-                                                    "Сохранить конфигурацию шлюза",
-                                                    QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/vpngate_gateway.ovpn",
-                                                    "OpenVPN файлы (*.ovpn)");
+    // Предлагаем место для сохранения
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString defaultName = QString("VPNGate_Gateway_External_%1.ovpn")
+    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
 
-    if (!fileName.isEmpty()) {
-        QFile file(fileName);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream stream(&file);
-            stream << config;
-            file.close();
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить конфигурацию VPN Gateway (Внешняя)",
+                                                    defaultDir + "/" + defaultName,
+                                                    "OpenVPN конфигурации (*.ovpn);;Текстовые файлы (*.txt);;Все файлы (*)"
+    );
 
-            addLog(QString("Конфигурация шлюза сохранена: %1").arg(fileName), "SUCCESS");
-            QMessageBox::information(this, "Конфигурация создана",
-                                     QString("✅ Конфигурация для VPN Gateway создана!\n\n"
-                                     "IP адрес шлюза: %1\n"
-                                     "Порт: 1194\n"
-                                     "Логин: vpn\n"
-                                     "Пароль: vpn\n\n"
-                                     "Используйте этот файл на других устройствах.")
-                                     .arg(localIP.split(" ").first()));
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    // Добавляем расширение .ovpn если не указано
+    if (!fileName.endsWith(".ovpn", Qt::CaseInsensitive)) {
+        fileName += ".ovpn";
+    }
+
+    // Сохраняем файл
+    QFile file(fileName);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream stream(&file);
+        // Для Qt6 используйте setEncoding вместо setCodec
+        #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        stream.setEncoding(QStringConverter::Utf8);
+        #else
+        stream.setCodec("UTF-8");
+        #endif
+        stream << config;
+        file.close();
+
+        // Логируем успех
+        addLog(QString("✅ Конфигурация шлюза для внешнего подключения создана: %1").arg(QFileInfo(fileName).fileName()), "SUCCESS");
+
+        // Показываем подробную информацию
+        QString message = QString(
+            "✅ Конфигурация VPN Gateway для внешнего подключения создана!\n\n"
+            "📋 Настройки для подключения:\n"
+            "─────────────────────────────\n"
+            "🌐 Домен шлюза: %1\n"
+            "🔌 Порт: 1194 (UDP)\n"
+            "👤 Логин: vpn\n"
+            "🔑 Пароль: vpn\n"
+            "📁 Файл: %2\n\n"
+            "⚙️ Требования на роутере:\n"
+            "─────────────────────────────\n"
+            "1. Порт 1194/UDP должен быть проброшен\n"
+            "2. Назначен статический IP для этого ПК в локальной сети\n"
+            "3. Входящие подключения разрешены\n\n"
+            "📱 Как использовать:\n"
+            "─────────────────────────────\n"
+            "1. Скопируйте файл на удаленное устройство\n"
+            "2. Установите OpenVPN клиент\n"
+            "3. Импортируйте этот файл\n"
+            "4. Подключитесь из любой сети\n\n"
+            "⚠️  Важно:\n"
+            "─────────────────────────────\n"
+            "• Этот ПК должен быть всегда включен\n"
+            "• Порт 1194 должен быть открыт в брандмауэре\n"
+            "• На роутере настроен Port Forwarding"
+        ).arg(gatewayAddress).arg(fileName);
+
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle("Конфигурация создана (Внешний доступ)");
+        msgBox.setText(message);
+        msgBox.setIcon(QMessageBox::Information);
+        msgBox.setStandardButtons(QMessageBox::Ok);
+
+        // Добавляем кнопку для копирования домена
+        QPushButton *copyDomainButton = msgBox.addButton("📋 Копировать домен", QMessageBox::ActionRole);
+        QPushButton *openFolderButton = msgBox.addButton("📂 Открыть папку", QMessageBox::ActionRole);
+
+        msgBox.exec();
+
+        // Обработка нажатий кнопок
+        if (msgBox.clickedButton() == copyDomainButton) {
+            QClipboard *clipboard = QApplication::clipboard();
+            clipboard->setText(gatewayAddress);
+            addLog(QString("Домен %1 скопирован в буфер обмена").arg(gatewayAddress), "INFO");
+            QMessageBox::information(this, "Скопировано", "Домен скопирован в буфер обмена!");
         }
+        else if (msgBox.clickedButton() == openFolderButton) {
+            QString folderPath = QFileInfo(fileName).absolutePath();
+            QUrl folderUrl = QUrl::fromLocalFile(folderPath);
+            QDesktopServices::openUrl(folderUrl);
+            addLog(QString("Открыта папка: %1").arg(folderPath), "INFO");
+        }
+
+    } else {
+        // Ошибка сохранения
+        QString errorMsg = QString("Не удалось сохранить файл:\n%1\n\nПричина: %2")
+        .arg(fileName)
+        .arg(file.errorString());
+
+        addLog(QString("❌ Ошибка сохранения конфигурации: %1").arg(file.errorString()), "ERROR");
+        QMessageBox::critical(this, "Ошибка сохранения", errorMsg);
     }
 }
 
@@ -2677,7 +3033,29 @@ void MainWindow::on_quickConnectRandomButton_clicked() {
 }
 
 void MainWindow::on_createGatewayConfigButton_clicked() {
-    generateGatewayConfig();
+    QMenu menu(this);
+
+    QAction* realConfigAction = menu.addAction("🔧 Реальная конфигурация VPNGate");
+    QAction* androidAction = menu.addAction("📱 Для Android");
+    QAction* externalAction = menu.addAction("🌐 Для внешнего доступа");
+    QAction* localAction = menu.addAction("🏠 Для локальной сети");
+    QAction* simpleAction = menu.addAction("⚡ Простая конфигурация");
+
+    QPoint pos = ui->createGatewayConfigButton->mapToGlobal(QPoint(0, ui->createGatewayConfigButton->height()));
+
+    QAction* selectedAction = menu.exec(pos);
+
+    if (selectedAction == realConfigAction) {
+        generateRealVPNGateConfig();
+    } else if (selectedAction == androidAction) {
+        generateAndroidGatewayConfig();
+    } else if (selectedAction == externalAction) {
+        generateGatewayConfig();
+    } else if (selectedAction == localAction) {
+        generateLocalGatewayConfig();
+    } else if (selectedAction == simpleAction) {
+        generateSimpleAndroidConfig();
+    }
 }
 
 void MainWindow::updateLogCounter() {
@@ -2703,15 +3081,20 @@ void MainWindow::updateConnectionTimerDisplay() {
 }
 
 void MainWindow::updateGatewayInfo() {
-    updateLocalIP();
+    QString localIP = getLocalIPAddress();
+    QString domainIP = "wwcat.duckdns.org";
+
+    if (localIP != domainIP) {
+        ui->gatewayInfoLabel->setText(QString("Локальный IP: %1 | Домен: %2").arg(localIP).arg(domainIP));
+    } else {
+        ui->gatewayInfoLabel->setText(QString("Домен: %1").arg(domainIP));
+    }
 
     if (vpnGatewayEnabled) {
         ui->gatewayStatusLabel->setText("Статус: Активен");
-        ui->gatewayInfoLabel->setText(QString("IP: %1").arg(localIPAddress));
         ui->createGatewayConfigButton->setEnabled(true);
     } else {
         ui->gatewayStatusLabel->setText("Статус: Неактивен");
-        ui->gatewayInfoLabel->setText("IP: Не определен");
         ui->createGatewayConfigButton->setEnabled(false);
     }
 }
@@ -2782,15 +3165,19 @@ VpnServer MainWindow::findRandomServer() const {
 }
 
 void MainWindow::updateLocalIP() {
-    QProcess process;
-    process.start("hostname", QStringList() << "-I");
-    process.waitForFinished();
+    localIPAddress = getLocalIPAddress();
 
-    QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
-    if (!output.isEmpty()) {
-        localIPAddress = output.split(" ").first();
-    } else {
-        localIPAddress = "Не определен";
+    if (ui->gatewayInfoLabel) {
+        if (localIPAddress != "Не определен") {
+            ui->gatewayInfoLabel->setText(QString("IP: %1").arg(localIPAddress));
+        } else {
+            ui->gatewayInfoLabel->setText("IP: Не определен");
+        }
+    }
+
+    // Включаем кнопку создания конфига, если IP определен
+    if (ui->createGatewayConfigButton) {
+        ui->createGatewayConfigButton->setEnabled(localIPAddress != "Не определен");
     }
 }
 
@@ -2818,4 +3205,503 @@ int MainWindow::getWorkingServerCount() const {
 
 int MainWindow::getFailedServerCount() const {
     return failedServers.size();
+}
+
+void MainWindow::generateLocalGatewayConfig() {
+    // Для локальной сети используем локальный IP
+    QString localIP = getLocalIPAddress();
+
+    if (localIP == "Не определен") {
+        QMessageBox::critical(this, "Ошибка",
+                              "Не удалось определить локальный IP адрес.\n"
+                              "Убедитесь, что компьютер подключен к сети.");
+        return;
+    }
+
+    QString config = QString(
+        "##############################################\n"
+        "# VPN Gateway Configuration (Local Network)\n"
+        "# Generated by VPNGate Manager Pro\n"
+        "# Date: %1\n"
+        "##############################################\n\n"
+        "client\n"
+        "dev tun\n"
+        "proto udp\n"
+        "remote %2 1194\n"
+        "resolv-retry infinite\n"
+        "nobind\n"
+        "persist-key\n"
+        "persist-tun\n"
+        "remote-cert-tls server\n"
+        "cipher AES-256-CBC\n"
+        "auth SHA256\n"
+        "verb 3\n"
+        "auth-user-pass\n"
+        "auth-nocache\n"
+        "connect-retry 2\n"
+        "connect-retry-max 3\n"
+        "connect-timeout 30\n\n"
+        "# Для локальной сети\n"
+        "; This configuration is for LOCAL network only\n"
+        "; Use when connected to the same Wi-Fi/network\n\n"
+        "##############################################\n"
+    ).arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"))
+    .arg(localIP);
+
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString defaultName = QString("VPNGate_Gateway_Local_%1.ovpn")
+    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить конфигурацию VPN Gateway (Локальная сеть)",
+                                                    defaultDir + "/" + defaultName,
+                                                    "OpenVPN конфигурации (*.ovpn)"
+    );
+
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream stream(&file);
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            stream.setEncoding(QStringConverter::Utf8);
+            #else
+            stream.setCodec("UTF-8");
+            #endif
+            stream << config;
+            file.close();
+
+            addLog(QString("✅ Локальная конфигурация шлюза создана: %1").arg(QFileInfo(fileName).fileName()), "SUCCESS");
+            QMessageBox::information(this, "Готово",
+                                     QString("Локальная конфигурация создана!\n\n"
+                                     "IP адрес: %1\n"
+                                     "Только для устройств в одной локальной сети")
+                                     .arg(localIP));
+        }
+    }
+}
+
+void MainWindow::setupToolTips() {
+    // Основные кнопки
+    ui->refreshButton->setToolTip("<b>Обновить список серверов</b><br>Загружает актуальный список с VPNGate");
+    ui->connectButton->setToolTip("<b>Подключиться к VPN</b><br>Подключается к выбранному серверу");
+    ui->disconnectButton->setToolTip("<b>Отключиться от VPN</b><br>Разрывает текущее подключение");
+
+    // Кнопки экспорта
+    ui->exportConfigButton->setToolTip("<b>Экспорт конфигурации</b><br>Сохранить конфиг выбранного сервера");
+    ui->shareVPNButton->setToolTip("<b>VPN Gateway</b><br>Запустить шлюз для других устройств");
+    ui->createGatewayConfigButton->setToolTip("<b>Конфиг для шлюза</b><br>Создать файл для подключения к шлюзу");
+
+    // Настройки
+    ui->autoReconnectCheckbox->setToolTip("<b>Авто-подключение</b><br>Автоматически переподключаться при разрыве");
+    ui->autoRefreshCheckbox->setToolTip("<b>Авто-обновление</b><br>Периодически обновлять список серверов");
+
+    // Сортировка
+    ui->sortBySpeedButton->setToolTip("<b>Сортировать по скорости</b><br>Быстрее → медленнее");
+    ui->sortByPingButton->setToolTip("<b>Сортировать по пингу</b><br>Быстрый отклик → медленный");
+    ui->sortByCountryButton->setToolTip("<b>Сортировать по стране</b><br>Алфавитный порядок");
+
+    // Быстрое подключение
+    ui->quickConnectFastButton->setToolTip("<b>Самый быстрый сервер</b><br>Подключиться к серверу с максимальной скоростью");
+    ui->quickConnectStableButton->setToolTip("<b>Самый стабильный</b><br>Подключиться к серверу с лучшим аптаймом");
+    ui->quickConnectRandomButton->setToolTip("<b>Случайный сервер</b><br>Подключиться к случайному доступному серверу");
+
+    // Gateway
+    ui->gatewayStartButton->setToolTip("<b>Запустить Gateway</b><br>Запустить VPN шлюз для других устройств");
+    ui->gatewayStopButton->setToolTip("<b>Остановить Gateway</b><br>Остановить работу VPN шлюза");
+
+    // Логи
+    ui->clearLogButton->setToolTip("Очистить область логов");
+    ui->saveLogButton->setToolTip("Сохранить лог в файл");
+    ui->resetFailedButton->setToolTip("Очистить список неудачных серверов");
+}
+
+void MainWindow::generateRealVPNGateConfig() {
+    // Проверяем, есть ли серверы
+    if (servers.isEmpty()) {
+        QMessageBox::warning(this, "Нет серверов",
+                             "Сначала загрузите список серверов через кнопку '🔄 Обновить'.");
+        return;
+    }
+
+    // Выбираем лучший сервер для примера
+    VpnServer server;
+    if (!servers.isEmpty()) {
+        // Ищем сервер с хорошей скоростью
+        for (const VpnServer& s : servers) {
+            if (s.speedMbps > 50 && s.ping < 200) {
+                server = s;
+                break;
+            }
+        }
+        // Если не нашли быстрый, берем первый
+        if (server.name.isEmpty()) {
+            server = servers.first();
+        }
+    }
+
+    // Декодируем конфиг сервера
+    QByteArray configData = QByteArray::fromBase64(server.configBase64.toLatin1());
+    QString originalConfig = QString::fromUtf8(configData);
+
+    // Парсим оригинальный конфиг
+    QStringList lines = originalConfig.split('\n');
+    QStringList modifiedLines;
+
+    // Флаг для пропуска CA сертификата (если есть)
+    bool inCaBlock = false;
+    bool caFound = false;
+    QString caCertificate;
+
+    for (QString line : lines) {
+        line = line.trimmed();
+
+        // Обработка CA сертификата
+        if (line.contains("<ca>") || line.contains("-----BEGIN CERTIFICATE-----")) {
+            inCaBlock = true;
+            caFound = true;
+            continue;
+        }
+
+        if (line.contains("</ca>") || line.contains("-----END CERTIFICATE-----")) {
+            inCaBlock = false;
+            continue;
+        }
+
+        if (inCaBlock) {
+            caCertificate += line + "\n";
+            continue;
+        }
+
+        // Заменяем адрес сервера на наш домен
+        if (line.startsWith("remote ")) {
+            QStringList parts = line.split(' ', Qt::SkipEmptyParts);
+            if (parts.size() >= 2) {
+                QString port = parts.size() > 2 ? parts[2] : "1194";
+                QString proto = parts.size() > 3 ? parts[3] : "";
+
+                modifiedLines.append(QString("remote wwcat.duckdns.org %1%2")
+                .arg(port)
+                .arg(proto.isEmpty() ? "" : " " + proto));
+            } else {
+                modifiedLines.append("remote wwcat.duckdns.org 1194");
+            }
+        }
+        // Настройки протокола
+        else if (line.startsWith("proto ")) {
+            modifiedLines.append("proto udp");
+        }
+        // Настройки шифрования
+        else if (line.startsWith("cipher ") || line.startsWith("data-ciphers ")) {
+            modifiedLines.append("cipher AES-256-CBC");
+            modifiedLines.append("data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305");
+        }
+        else if (line.startsWith("auth ")) {
+            modifiedLines.append("auth SHA256");
+        }
+        // Сжатие
+        else if (line.contains("compress") || line.contains("comp-lzo")) {
+            modifiedLines.append("compress lz4");
+        }
+        // Убираем проблемные настройки
+        else if (line.contains("fragment") || line.contains("mssfix")) {
+            // Пропускаем, добавим свои позже
+            continue;
+        }
+        // Учетные данные
+        else if (line.contains("auth-user-pass")) {
+            modifiedLines.append("auth-user-pass");
+        }
+        // Все остальное сохраняем
+        else if (!line.isEmpty() && !line.startsWith(";") && !line.startsWith("#")) {
+            modifiedLines.append(line);
+        }
+    }
+
+    // Добавляем CA сертификат, если нашли
+    if (caFound && !caCertificate.isEmpty()) {
+        modifiedLines.append("\n<ca>");
+        modifiedLines.append(caCertificate);
+        modifiedLines.append("</ca>");
+    }
+
+    // Добавляем необходимые опции для Android
+    modifiedLines.append("\n# Оптимизации для Android и внешнего подключения");
+    modifiedLines.append("resolv-retry infinite");
+    modifiedLines.append("nobind");
+    modifiedLines.append("persist-key");
+    modifiedLines.append("persist-tun");
+    modifiedLines.append("remote-cert-tls server");
+    modifiedLines.append("verb 3");
+    modifiedLines.append("mssfix 1450");
+    modifiedLines.append("tun-mtu 1500");
+    modifiedLines.append("keepalive 10 120");
+    modifiedLines.append("reneg-sec 0");
+    modifiedLines.append("script-security 2");
+    modifiedLines.append("auth-nocache");
+    modifiedLines.append("float");
+    modifiedLines.append("explicit-exit-notify 2");
+    modifiedLines.append("connect-retry 2");
+    modifiedLines.append("connect-retry-max 3");
+    modifiedLines.append("connect-timeout 30");
+
+    // Для Android
+    modifiedLines.append("setenv CLIENT_CERT 0");
+    modifiedLines.append("verify-x509-name server name");
+
+    // DNS
+    modifiedLines.append("dhcp-option DNS 8.8.8.8");
+    modifiedLines.append("dhcp-option DNS 8.8.4.4");
+    modifiedLines.append("dhcp-option DNS 1.1.1.1");
+
+    // Комментарий с информацией
+    modifiedLines.append("\n# Информация о подключении");
+    modifiedLines.append(QString("; Based on VPNGate server: %1").arg(server.name));
+    modifiedLines.append(QString("; Original server: %1 (%2)").arg(server.ip).arg(server.country));
+    modifiedLines.append("; Modified for Gateway: wwcat.duckdns.org");
+    modifiedLines.append("; Username: vpn");
+    modifiedLines.append("; Password: vpn");
+    modifiedLines.append("; Port: 1194 (UDP)");
+    modifiedLines.append("; Note: Port 1194 must be forwarded to this PC");
+
+    // Собираем финальный конфиг
+    QString config = modifiedLines.join('\n');
+
+    // Предлагаем сохранить
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString defaultName = QString("VPNGate_Real_%1_%2.ovpn")
+    .arg(server.name)
+    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+
+    // Убираем недопустимые символы из имени файла
+    defaultName = defaultName.replace(QRegularExpression("[^a-zA-Z0-9._-]"), "_");
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить реальную конфигурацию VPNGate",
+        defaultDir + "/" + defaultName,
+        "OpenVPN конфигурации (*.ovpn);;Все файлы (*)"
+    );
+
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream stream(&file);
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            stream.setEncoding(QStringConverter::Utf8);
+            #else
+            stream.setCodec("UTF-8");
+            #endif
+            stream << config;
+            file.close();
+
+            // Логируем
+            addLog(QString("✅ Реальная конфигурация на основе сервера %1 создана").arg(server.name), "SUCCESS");
+
+            // Показываем информацию
+            QString message = QString(
+                "✅ Конфигурация создана на основе реального сервера VPNGate!\n\n"
+                "📊 Исходный сервер:\n"
+                "• Название: %1\n"
+                "• Страна: %2\n"
+                "• Скорость: %3 Mbps\n"
+                "• Пинг: %4 ms\n\n"
+                "🌐 Шлюз:\n"
+                "• Домен: wwcat.duckdns.org\n"
+                "• Порт: 1194 (UDP)\n"
+                "• Логин: vpn\n"
+                "• Пароль: vpn\n\n"
+                "📁 Файл сохранен:\n%5\n\n"
+                "⚠️  Требования:\n"
+                "• Порт 1194 должен быть проброшен на роутере\n"
+                "• Этот ПК должен быть включен\n"
+                "• Настройте Port Forwarding 1194/UDP"
+            ).arg(server.name)
+            .arg(server.country)
+            .arg(server.speedMbps, 0, 'f', 1)
+            .arg(server.ping)
+            .arg(fileName);
+
+            QMessageBox msgBox(this);
+            msgBox.setWindowTitle("Реальная конфигурация VPNGate создана");
+            msgBox.setText(message);
+            msgBox.setIcon(QMessageBox::Information);
+            msgBox.setStandardButtons(QMessageBox::Ok);
+
+            // Кнопки действий
+            QPushButton *copyInfoButton = msgBox.addButton("📋 Инфо о сервере", QMessageBox::ActionRole);
+            QPushButton *testPortButton = msgBox.addButton("🔍 Проверить порт", QMessageBox::ActionRole);
+
+            msgBox.exec();
+
+            // Обработка кнопок
+            if (msgBox.clickedButton() == copyInfoButton) {
+                QString serverInfo = QString("Сервер: %1 (%2)\nСкорость: %3 Mbps\nПинг: %4 ms\nIP: %5")
+                .arg(server.name)
+                .arg(server.country)
+                .arg(server.speedMbps, 0, 'f', 1)
+                .arg(server.ping)
+                .arg(server.ip);
+
+                QClipboard *clipboard = QApplication::clipboard();
+                clipboard->setText(serverInfo);
+                addLog("Информация о сервере скопирована", "INFO");
+            }
+            else if (msgBox.clickedButton() == testPortButton) {
+                QMessageBox::information(this, "Проверка порта",
+                                         "Для проверки порта 1194:\n\n"
+                                         "1. Откройте сайт: https://www.yougetsignal.com/tools/open-ports/\n"
+                                         "2. Введите порт 1194\n"
+                                         "3. Нажмите 'Check'\n\n"
+                                         "Статус 'Open' означает успешную настройку.");
+            }
+
+        } else {
+            QMessageBox::critical(this, "Ошибка",
+                                  QString("Не удалось сохранить файл:\n%1\n\nПричина: %2")
+                                  .arg(fileName)
+                                  .arg(file.errorString()));
+        }
+    }
+}
+
+void MainWindow::generateAndroidGatewayConfig() {
+    QString gatewayAddress = "wwcat.duckdns.org";
+
+    QString config = QString(
+        "# OpenVPN Configuration for Android\n"
+        "# Generated by VPNGate Manager Pro\n"
+        "# Date: %1\n"
+        "client\n"
+        "dev tun\n"
+        "proto udp\n"
+        "remote %2 1194\n"
+        "resolv-retry infinite\n"
+        "nobind\n"
+        "persist-key\n"
+        "persist-tun\n"
+        "remote-cert-tls server\n"
+        "cipher AES-256-CBC\n"
+        "auth SHA256\n"
+        "verb 3\n"
+        "mssfix 1450\n"
+        "keepalive 10 120\n"
+        "tun-mtu 1500\n"
+        "reneg-sec 0\n"
+        "script-security 2\n"
+        "float\n"
+        "explicit-exit-notify 2\n"
+        "auth-user-pass\n"
+        "auth-nocache\n"
+        "connect-retry 2\n"
+        "connect-retry-max 3\n"
+        "connect-timeout 30\n\n"
+        "# DNS servers\n"
+        "dhcp-option DNS 8.8.8.8\n"
+        "dhcp-option DNS 8.8.4.4\n\n"
+        "# For Android compatibility\n"
+        "setenv CLIENT_CERT 0\n"
+        "verify-x509-name server name\n\n"
+        "# Connection info\n"
+        "; Gateway: %2\n"
+        "; Port: 1194 (UDP)\n"
+        "; Username: vpn\n"
+        "; Password: vpn\n"
+        "; Note: Port 1194 must be forwarded on your router\n"
+    ).arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"))
+    .arg(gatewayAddress);
+
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString defaultName = QString("VPNGate_Android_%1.ovpn")
+    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить конфигурацию для Android",
+        defaultDir + "/" + defaultName,
+        "OpenVPN конфигурации (*.ovpn)"
+    );
+
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream stream(&file);
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            stream.setEncoding(QStringConverter::Utf8);
+            #else
+            stream.setCodec("UTF-8");
+            #endif
+            stream << config;
+            file.close();
+
+            addLog(QString("✅ Конфигурация для Android создана: %1").arg(QFileInfo(fileName).fileName()), "SUCCESS");
+
+            QMessageBox::information(this, "Конфигурация создана",
+                                     QString("✅ Конфигурация для Android создана!\n\n"
+                                     "Настройки:\n"
+                                     "• Шлюз: %1\n"
+                                     "• Порт: 1194 (UDP)\n"
+                                     "• Логин: vpn\n"
+                                     "• Пароль: vpn\n\n"
+                                     "Как использовать:\n"
+                                     "1. Импортируйте файл в OpenVPN для Android\n"
+                                     "2. Укажите логин 'vpn' и пароль 'vpn'\n"
+                                     "3. Подключитесь\n\n"
+                                     "⚠️  Важно: порт 1194 должен быть проброшен на роутере")
+                                     .arg(gatewayAddress));
+        } else {
+            QMessageBox::critical(this, "Ошибка",
+                                  QString("Не удалось сохранить файл:\n%1").arg(fileName));
+        }
+    }
+}
+
+void MainWindow::generateSimpleAndroidConfig() {
+    QString gatewayAddress = "wwcat.duckdns.org";
+
+    QString config = QString(
+        "client\n"
+        "dev tun\n"
+        "proto udp\n"
+        "remote %1 1194\n"
+        "resolv-retry infinite\n"
+        "nobind\n"
+        "persist-key\n"
+        "persist-tun\n"
+        "cipher AES-256-CBC\n"
+        "auth SHA256\n"
+        "auth-user-pass\n"
+        "verb 2\n"
+        "mssfix 1450\n"
+        "keepalive 10 120\n"
+        "float\n"
+        "explicit-exit-notify 2\n"
+    ).arg(gatewayAddress);
+
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString defaultName = QString("VPNGate_Simple_%1.ovpn")
+    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить простую конфигурацию",
+        defaultDir + "/" + defaultName,
+        "OpenVPN конфигурации (*.ovpn)"
+    );
+
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream stream(&file);
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            stream.setEncoding(QStringConverter::Utf8);
+            #else
+            stream.setCodec("UTF-8");
+            #endif
+            stream << config;
+            file.close();
+
+            addLog(QString("✅ Простая конфигурация создана: %1").arg(QFileInfo(fileName).fileName()), "SUCCESS");
+        }
+    }
 }

@@ -14,6 +14,10 @@
 #include <QElapsedTimer>
 #include <QMap>
 #include <QPair>
+#include <QScreen>
+#include <QShortcut>
+#include <QGuiApplication>
+#include <QDesktopServices>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -99,9 +103,6 @@ private slots:
     // Слоты для VPN Gateway
     void onGatewayProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
-    // Дополнительные методы для нового функционала
-    void updateGatewayInfo();
-
 private:
     Ui::MainWindow *ui;
 
@@ -139,15 +140,25 @@ private:
     QTimer* autoRefreshTimer;
     QTimer* connectionUpdateTimer; // Для обновления времени подключения
     QTimer* statsUpdateTimer;      // Для обновления статистики
+    QTimer* ipUpdateTimer;         // Для обновления IP адреса
     QString lastConnectedServerName;
     int reconnectAttempts;         // Счетчик попыток
     bool isAutoReconnecting;       // Флаг авто-подключения
+
+    // Горячие клавиши
+    QShortcut* refreshShortcut;
+    QShortcut* connectShortcut;
+    QShortcut* disconnectShortcut;
 
     // VPN Gateway
     QProcess* gatewayProcess;
     bool vpnGatewayEnabled;
     QString gatewayInterface;
-    QString localIPAddress;        // Локальный IP адрес для шлюза
+    QString localIPAddress;
+
+    void generateRealVPNGateConfig();
+
+    // Локальный IP адрес для шлюза
 
     // Методы инициализации
     void initUI();
@@ -157,6 +168,7 @@ private:
     void saveSettings();
     void loadSettings();
     void initSortButtons();
+    void setupToolTips();
 
     // Методы обновления UI
     void updateServerList();
@@ -165,7 +177,7 @@ private:
     void updateStatusLabel(int displayed, int total, int failed, int blocked);
     void updateConnectionButtons(const QString& status, int displayed);
     void showEmptyListMessage(int displayed, int total, int failed, int blocked);
-    void updateGatewayStatus();
+    void updateGatewayInfo();
     void updateLocalIP();
 
     // Управление странами
@@ -200,7 +212,11 @@ private:
 
     // Новые методы для генерации конфигов шлюза
     void generateGatewayConfig();
-    QString getLocalIPAddress() const;
+    void generateAndroidGatewayConfig();
+    void generateLocalGatewayConfig();
+    QString getLocalIPAddress();
+
+    void generateSimpleAndroidConfig();
 
     // Методы для VPN Gateway
     void setupVPNGateway();
