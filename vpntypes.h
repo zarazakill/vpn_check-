@@ -22,11 +22,17 @@ struct VpnServer {
     bool available;
     int testPing;
     bool realConnectionTested;
+    QString username;
+    QString password;
 
     VpnServer()
     : port(1194), score(0), ping(999), speedMbps(0.0),
     tested(false), available(false), testPing(999),
-    realConnectionTested(false) {}
+    realConnectionTested(false) {
+        // Устанавливаем стандартные учетные данные для VPNGate
+        username = "vpn";
+        password = "vpn";
+    }
 
     // Добавляем операторы сравнения
     bool operator==(const VpnServer& other) const {

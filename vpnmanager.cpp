@@ -233,7 +233,7 @@ void VpnManager::connectToServer(const VpnServer& server) {
         }
 
         // Отправляем учетные данные
-        QString credentials = "vpn\nvpn\n";
+        QString credentials = currentServer.username + "\n" + currentServer.password + "\n";
         if (process->state() == QProcess::Running) {
             process->write(credentials.toUtf8());
             process->waitForBytesWritten(1000);
@@ -491,12 +491,8 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
 
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
-        if (trimmed.isEmpty()) {
-            continue;
-        }
-
-        if (trimmed.startsWith(";") || trimmed.startsWith("#")) {
-            enhancedLines.append(trimmed);
+        if (trimmed.isEmpty() || trimmed.startsWith(";") || trimmed.startsWith("#")) {
+            enhancedLines.append(line); // Сохраняем комментарии с их оригинальным форматированием
             continue;
         }
 
@@ -504,29 +500,41 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
         if (trimmed.startsWith("ping ") || trimmed.startsWith("ping-restart ") ||
             trimmed.startsWith("keepalive ") || trimmed.startsWith("ping-timer-rem")) {
             enhancedLines.append(QString("# %1  # Игнорируем, устанавливаем свои").arg(trimmed));
-        continue;
-            }
+            continue;
+        }
 
-            if (trimmed.startsWith("cipher ")) {
-                QString cipher = trimmed.split(' ')[1];
+        if (trimmed.startsWith("cipher ")) {
+            QString cipher = trimmed.split(' ', Qt::SkipEmptyParts)[1];
+            enhancedLines.append(QString("# %1  # Сохраняем оригинальную настройку").arg(trimmed));
+            enhancedLines.append(QString("cipher %1").arg(cipher)); // Используем оригинальный шифр
+        } else if (trimmed.startsWith("auth ")) {
+            QString auth = trimmed.split(' ', Qt::SkipEmptyParts)[1];
+            enhancedLines.append(QString("# %1  # Сохраняем оригинальную настройку").arg(trimmed));
+            enhancedLines.append(QString("auth %1").arg(auth)); // Используем оригинальную аутентификацию
+        } else if (trimmed.contains("fragment") || trimmed.contains("mssfix")) {
+            // Убираем эти настройки, чтобы использовать наши собственные
+            enhancedLines.append(QString("# %1  # Заменено нашими настройками").arg(trimmed));
+        } else if (trimmed.startsWith("comp-lzo") || trimmed.contains("compress")) {
+            // ВАЖНО: Не игнорируем настройки сжатия от сервера
+            // Вместо этого, комментируем их и добавляем соответствующую настройку
+            if (trimmed.contains("adaptive")) {
                 enhancedLines.append(QString("# %1").arg(trimmed));
-                enhancedLines.append(QString("data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:%1").arg(cipher));
-                enhancedLines.append(QString("data-ciphers-fallback %1").arg(cipher));
-            } else if (trimmed.contains("fragment") || trimmed.contains("mssfix")) {
-                enhancedLines.append(QString("# %1  # Отключено для совместимости").arg(trimmed));
-            } else if (trimmed.startsWith("comp-lzo") || trimmed.contains("compress")) {
-                // ВАЖНО: Не игнорируем настройки сжатия от сервера
-                // Вместо этого, комментируем их и добавляем соответствующую настройку
-                if (trimmed.contains("lzo")) {
-                    enhancedLines.append(QString("# %1").arg(trimmed));
-                    enhancedLines.append("comp-lzo yes");  // Разрешаем сжатие
-                } else if (trimmed.contains("stub")) {
-                    enhancedLines.append(QString("# %1").arg(trimmed));
-                    enhancedLines.append("comp-lzo no");  // Используем stub compression
-                }
+                enhancedLines.append("comp-lzo adaptive");  // Используем адаптивное сжатие
+            } else if (trimmed.contains("yes") || trimmed.contains("lzo")) {
+                enhancedLines.append(QString("# %1").arg(trimmed));
+                enhancedLines.append("comp-lzo yes");  // Разрешаем сжатие
+            } else if (trimmed.contains("no") || trimmed.contains("stub")) {
+                enhancedLines.append(QString("# %1").arg(trimmed));
+                enhancedLines.append("comp-lzo no");  // Используем stub compression
             } else {
-                enhancedLines.append(trimmed);
+                enhancedLines.append(trimmed); // Сохраняем оригинальную настройку
             }
+        } else if (trimmed.startsWith("auth-user-pass")) {
+            // Заменяем любые существующие настройки auth-user-pass, т.к. мы передаем их через stdin
+            enhancedLines.append(QString("# %1  # Заменено нашей аутентификацией").arg(trimmed));
+        } else {
+            enhancedLines.append(line); // Сохраняем оригинальную строку с форматированием
+        }
     }
 
     // Добавляем наши оптимизации
@@ -535,10 +543,13 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
     enhancedLines.append("tls-client");
     enhancedLines.append("reneg-sec 0");
     enhancedLines.append("script-security 2");
-    enhancedLines.append("auth-retry interact");
-    enhancedLines.append("auth-nocache");
+    
+    // Настройки аутентификации
+    enhancedLines.append("auth-user-pass");  // Используем stdin для аутентификации
+    
+    // Повтор подключения
     enhancedLines.append("connect-retry 2");
-    enhancedLines.append("connect-retry-max 3");
+    enhancedLines.append("connect-retry-max 5");
     enhancedLines.append(QString("connect-timeout %1").arg(connectionTimeout));
 
     // Блокируем только настройки ping, НЕ настройки сжатия
@@ -552,10 +563,11 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
     // enhancedLines.append("pull-filter ignore \"compress\"");
 
     // Наши собственные настройки keepalive
-    enhancedLines.append("keepalive 15 180");
+    enhancedLines.append("keepalive 10 60");
 
     enhancedLines.append("tun-mtu 1500");
-    enhancedLines.append("mssfix 1450");
+    enhancedLines.append("fragment 1300");  // Уменьшаем размер фрагмента для лучшей совместимости
+    enhancedLines.append("mssfix 1200");    // Уменьшаем MSS для лучшей совместимости
     enhancedLines.append("persist-key");
     enhancedLines.append("persist-tun");
     enhancedLines.append("nobind");
@@ -564,10 +576,11 @@ QString VpnManager::enhanceConfigForConnection(const QString& configContent, con
     enhancedLines.append("resolv-retry infinite");
     enhancedLines.append("mute-replay-warnings");
 
-    // Дополнительные опции - УБИРАЕМ явное указание comp-lzo
+    // Дополнительные опции для стабильности
     enhancedLines.append("explicit-exit-notify 0");
-    // УБРАНО: enhancedLines.append("comp-lzo no");  // Это вызывает конфликт
-    enhancedLines.append("auth SHA1");
+    enhancedLines.append("fast-io");        // Улучшает производительность
+    enhancedLines.append("sndbuf 393216");  // Увеличиваем буфер отправки
+    enhancedLines.append("rcvbuf 393216");  // Увеличиваем буфер приема
 
     // Настройки логирования
     enhancedLines.append("verb 3");
